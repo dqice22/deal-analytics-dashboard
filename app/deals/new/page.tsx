@@ -1,185 +1,624 @@
+/**
+ * 画面名: 新規商談登録画面
+ * ファイルパス: app/deals/new/page.tsx
+ * 役割: 商談情報の入力・送信（AI分析およびdealsテーブルへの新規登録）とダッシュボード遷移
+ */
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { createClient } from '@supabase/supabase-js';
 
-// フォームデータの型定義
-interface DealForm {
-    company_name: string;
-    person_in_charge: string;
-    deal_date: string;
-    raw_memo: string;
+const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+const RAW_MEMO_MAX_LENGTH = 2000;
+
+interface CurrentUser {
+    employeeCode: string;
+    employeeName: string;
+    positionCode: string | null;
+    isAdmin: boolean;
 }
 
-export default function NewDealPage() {
+interface Company {
+    company_id: number;
+    company_name: string;
+}
+
+interface DealPhase {
+    phase_code: string;
+    phase_name: string;
+    sort_no: number;
+}
+
+interface Employee {
+    employee_code: string;
+    employee_name: string;
+}
+
+function normalizeText(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+function getTodayDateString(): string {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function NewDealContent() {
     const router = useRouter();
-    const [loading, setLoading] = useState(false);
-    const [analyzing, setAnalyzing] = useState(false);
-    const [error, setError] = useState('');
 
-    // 初期値を空文字にすることで、プリレンダーエラーもLint警告も完全に回避します
-    const [form, setForm] = useState<DealForm>({
-        company_name: '',
-        person_in_charge: '',
-        deal_date: '',
-        raw_memo: '',
-    });
+    const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+    const [authChecking, setAuthChecking] = useState(true);
 
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-        setForm({ ...form, [e.target.name]: e.target.value });
-    };
+    const [companies, setCompanies] = useState<Company[]>([]);
+    const [phases, setPhases] = useState<DealPhase[]>([]);
+    const [employees, setEmployees] = useState<Employee[]>([]);
+    const [loadingMasters, setLoadingMasters] = useState(true);
 
-    // フォーム送信とGemini解析・Supabase保存の処理
+    // 登録フォームの状態
+    const [companyId, setCompanyId] = useState('');
+    const [dealTitle, setDealTitle] = useState('');
+    const [dealDate, setDealDate] = useState(() => getTodayDateString());
+    const [personInChargeCode, setPersonInChargeCode] = useState('');
+    const [phaseCode, setPhaseCode] = useState('');
+    const [rawMemo, setRawMemo] = useState('');
+
+    const [submitting, setSubmitting] = useState(false);
+    const [errorMsg, setErrorMsg] = useState('');
+    const [message, setMessage] = useState('');
+
+    const applyDefaultFormState = useCallback(
+        (
+            user: CurrentUser | null,
+            phaseList: DealPhase[],
+            employeeList: Employee[]
+        ) => {
+            const defaultPhaseCode = phaseList.length > 0 ? phaseList[0].phase_code : '';
+            const matchedEmployee =
+                user?.employeeCode
+                    ? employeeList.find((emp) => emp.employee_code === user.employeeCode)
+                    : undefined;
+
+            setCompanyId('');
+            setDealTitle('');
+            setDealDate(getTodayDateString());
+            setPersonInChargeCode(matchedEmployee ? matchedEmployee.employee_code : '');
+            setPhaseCode(defaultPhaseCode);
+            setRawMemo('');
+            setSubmitting(false);
+            setErrorMsg('');
+            setMessage('');
+        },
+        []
+    );
+
+    // 再表示時に前回の入力値・状態をリセット
+    useEffect(() => {
+        const handlePageShow = () => {
+            applyDefaultFormState(currentUser, phases, employees);
+        };
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'visible') {
+                applyDefaultFormState(currentUser, phases, employees);
+            }
+        };
+
+        window.addEventListener('pageshow', handlePageShow);
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+
+        return () => {
+            window.removeEventListener('pageshow', handlePageShow);
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+        };
+    }, [currentUser, phases, employees, applyDefaultFormState]);
+
+    // ログイン状態確認
+    useEffect(() => {
+        let active = true;
+
+        const checkAuth = async () => {
+            try {
+                const res = await fetch('/api/auth/me', { cache: 'no-store' });
+                if (!active) return;
+
+                if (!res.ok) {
+                    router.replace('/login');
+                    return;
+                }
+
+                const data = await res.json();
+                if (!active) return;
+
+                if (!data.user) {
+                    router.replace('/login');
+                    return;
+                }
+
+                const normalizedUser: CurrentUser = {
+                    ...data.user,
+                    employeeCode: normalizeText(data.user.employeeCode),
+                    employeeName: normalizeText(data.user.employeeName),
+                    positionCode: data.user.positionCode ? normalizeText(data.user.positionCode) : null,
+                    isAdmin: Boolean(data.user.isAdmin),
+                };
+
+                setCurrentUser(normalizedUser);
+            } catch {
+                if (active) {
+                    router.replace('/login');
+                }
+            } finally {
+                if (active) {
+                    setAuthChecking(false);
+                }
+            }
+        };
+
+        void checkAuth();
+
+        return () => {
+            active = false;
+        };
+    }, [router]);
+
+    // マスタデータ取得
+    const loadMasters = useCallback(async () => {
+        try {
+            const [
+                { data: companiesData, error: companiesError },
+                { data: phasesData, error: phasesError },
+                { data: employeesData, error: employeesError },
+            ] = await Promise.all([
+                supabase
+                    .from('companies')
+                    .select('company_id, company_name')
+                    .order('company_id', { ascending: true }),
+                supabase
+                    .from('deal_phases')
+                    .select('phase_code, phase_name, sort_no')
+                    .order('sort_no', { ascending: true }),
+                supabase
+                    .from('employees')
+                    .select('employee_code, employee_name')
+                    .eq('delete_flg', false)
+                    .order('employee_code', { ascending: true }),
+            ]);
+
+            if (companiesError) console.error('companies fetch error:', companiesError);
+            if (phasesError) console.error('phases fetch error:', phasesError);
+            if (employeesError) console.error('employees fetch error:', employeesError);
+
+            const companyList: Company[] = (companiesData ?? []).map((c) => ({
+                company_id: Number(c.company_id),
+                company_name: normalizeText(c.company_name),
+            }));
+
+            const phaseList: DealPhase[] = (phasesData ?? []).map((p) => ({
+                phase_code: normalizeText(p.phase_code),
+                phase_name: normalizeText(p.phase_name),
+                sort_no: Number(p.sort_no),
+            }));
+
+            const employeeList: Employee[] = (employeesData ?? []).map((e) => ({
+                employee_code: normalizeText(e.employee_code),
+                employee_name: normalizeText(e.employee_name),
+            }));
+
+            setCompanies(companyList);
+            setPhases(phaseList);
+            setEmployees(employeeList);
+            applyDefaultFormState(currentUser, phaseList, employeeList);
+        } finally {
+            setLoadingMasters(false);
+        }
+    }, [currentUser, applyDefaultFormState]);
+
+    useEffect(() => {
+        if (authChecking || !currentUser) return;
+
+        let active = true;
+        const timer = window.setTimeout(() => {
+            if (active) {
+                void loadMasters();
+            }
+        }, 0);
+
+        return () => {
+            active = false;
+            window.clearTimeout(timer);
+        };
+    }, [authChecking, currentUser, loadMasters]);
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        setLoading(true);
-        setAnalyzing(true);
-        setError('');
+        if (!currentUser) return;
+
+        setErrorMsg('');
+        setMessage('');
+
+        const parsedCompanyId = Number(companyId);
+        const trimmedTitle = dealTitle.trim();
+        const trimmedDate = dealDate.trim();
+        const trimmedPhaseCode = phaseCode.trim();
+        const trimmedPersonCode = personInChargeCode.trim();
+        const trimmedMemo = rawMemo.trim();
+
+        if (!Number.isFinite(parsedCompanyId) || parsedCompanyId <= 0) {
+            setErrorMsg('顧客企業を選択してください。');
+            return;
+        }
+        if (!trimmedTitle) {
+            setErrorMsg('商談タイトル・案件名を入力してください。');
+            return;
+        }
+        if (!trimmedDate) {
+            setErrorMsg('商談日を入力してください。');
+            return;
+        }
+        if (!trimmedPersonCode || !employees.some((emp) => emp.employee_code === trimmedPersonCode)) {
+            setErrorMsg('担当社員を選択してください。');
+            return;
+        }
+        if (!trimmedPhaseCode || !phases.some((p) => p.phase_code === trimmedPhaseCode)) {
+            setErrorMsg('商談フェーズを選択してください。');
+            return;
+        }
+        if (!trimmedMemo) {
+            setErrorMsg('商談メモを入力してください。');
+            return;
+        }
+        if (trimmedMemo.length > RAW_MEMO_MAX_LENGTH) {
+            setErrorMsg(`商談メモは${RAW_MEMO_MAX_LENGTH}文字以内で入力してください。`);
+            return;
+        }
+
+        setSubmitting(true);
 
         try {
-            const response = await fetch('/api/analyze', { // APIのエンドポイント（必要に応じて /api/analyze 等に調整してください）
+            const res = await fetch('/api/deals', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(form),
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    company_id: parsedCompanyId,
+                    deal_title: trimmedTitle,
+                    person_in_charge_employee_id: trimmedPersonCode,
+                    deal_date: trimmedDate,
+                    phase_code: trimmedPhaseCode,
+                    raw_memo: trimmedMemo,
+                }),
             });
 
-            if (!response.ok) {
-                throw new Error('商談の保存または解析に失敗しました。');
+            const data = await res.json();
+            if (!res.ok) {
+                setErrorMsg(data.error || '商談の登録に失敗しました。');
+                setSubmitting(false);
+                return;
             }
 
-            // 成功したらダッシュボードへ戻る
+            setMessage('商談を登録しました。ダッシュボードへ移動します...');
             router.push('/');
             router.refresh();
-        } catch (err: unknown) {
-            if (err instanceof Error) {
-                setError(err.message);
-            } else {
-                setError('予期せぬエラーが発生しました。');
-            }
-            setLoading(false);
-            setAnalyzing(false);
+        } catch {
+            setErrorMsg('登録処理中に通信エラーが発生しました。');
+            setSubmitting(false);
         }
     };
 
-    return (
-        <div style={{ maxWidth: '768px', margin: '0 auto', padding: '24px', boxSizing: 'border-box' }}>
-            <div style={{ marginBottom: '24px' }}>
-                <Link href="/" style={{ fontSize: '14px', color: '#2563eb', textDecoration: 'none', fontWeight: '500' }}>
-                    ← ダッシュボードに戻る
-                </Link>
-                <h1 style={{ fontSize: '24px', fontWeight: 'bold', color: '#111827', marginTop: '8px', marginBottom: '4px' }}>新規商談の登録 & AI解析</h1>
-                <p style={{ fontSize: '14px', color: '#6b7280', margin: 0 }}>商談メモを入力すると、Geminiが自動で要約・ネクストアクション・リスクを分析します。</p>
+    if (authChecking || loadingMasters) {
+        return (
+            <div style={{ padding: '40px', textAlign: 'center', fontFamily: 'sans-serif' }}>
+                読み込み中...
             </div>
+        );
+    }
 
-            {error && (
-                <div style={{ marginBottom: '24px', padding: '16px', backgroundColor: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', borderRadius: '8px', fontSize: '14px' }}>
-                    {error}
+    const trimmedMemoLength = rawMemo.trim().length;
+    const isMemoOverLimit = trimmedMemoLength > RAW_MEMO_MAX_LENGTH;
+
+    return (
+        <div style={{ maxWidth: '880px', margin: '0 auto', padding: '24px', fontFamily: 'sans-serif' }}>
+            <header
+                style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    paddingBottom: '16px',
+                    borderBottom: '1px solid #e5e7eb',
+                    marginBottom: '24px',
+                    gap: '12px',
+                    flexWrap: 'wrap',
+                }}
+            >
+                <div>
+                    <h1 style={{ margin: '0 0 4px 0', fontSize: '22px' }}>新規商談登録</h1>
+                    <div style={{ fontSize: '13px', color: '#4b5563' }}>
+                        ログイン中: <strong>{currentUser?.employeeName}</strong>（{currentUser?.employeeCode}）
+                    </div>
                 </div>
-            )}
 
-            <form onSubmit={handleSubmit} style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '12px', border: '1px solid #e5e7eb', boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)', display: 'flex', flexDirection: 'column', gap: '24px', boxSizing: 'border-box' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px' }}>
+                <Link
+                    href="/"
+                    onClick={() => {
+                        applyDefaultFormState(currentUser, phases, employees);
+                    }}
+                    style={{
+                        padding: '8px 14px',
+                        backgroundColor: '#f3f4f6',
+                        color: '#111827',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        textDecoration: 'none',
+                        fontSize: '13px',
+                        fontWeight: 'bold',
+                    }}
+                >
+                    ← 一覧へ戻る
+                </Link>
+            </header>
+
+            <form
+                onSubmit={handleSubmit}
+                autoComplete="off"
+                style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '14px',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '8px',
+                    padding: '20px',
+                    backgroundColor: '#fff',
+                }}
+            >
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
                     <div>
-                        <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>企業名</label>
-                        <input
-                            type="text"
-                            name="company_name"
+                        <label htmlFor="companyId" style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' }}>
+                            顧客企業 *
+                        </label>
+                        <select
+                            id="companyId"
+                            value={companyId}
+                            onChange={(e) => setCompanyId(e.target.value)}
                             required
-                            value={form.company_name}
-                            onChange={handleChange}
-                            placeholder="例: 株式会社サンプル商事"
-                            style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', outline: 'none', boxSizing: 'border-box' }}
+                            style={{
+                                width: '100%',
+                                padding: '8px',
+                                border: '1px solid #d1d5db',
+                                borderRadius: '4px',
+                                backgroundColor: '#fff',
+                            }}
+                        >
+                            <option value="">選択してください</option>
+                            {companies.map((c) => (
+                                <option key={c.company_id} value={String(c.company_id)}>
+                                    {c.company_name}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label htmlFor="dealTitle" style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' }}>
+                            商談タイトル・案件名 *
+                        </label>
+                        <input
+                            id="dealTitle"
+                            type="text"
+                            value={dealTitle}
+                            onChange={(e) => setDealTitle(e.target.value)}
+                            placeholder="例: 業務システム刷新のご提案"
+                            autoComplete="off"
+                            required
+                            style={{
+                                width: '100%',
+                                padding: '8px',
+                                border: '1px solid #d1d5db',
+                                borderRadius: '4px',
+                                boxSizing: 'border-box',
+                            }}
                         />
                     </div>
+
                     <div>
-                        <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>担当者名</label>
+                        <label htmlFor="dealDate" style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' }}>
+                            商談日 *
+                        </label>
                         <input
-                            type="text"
-                            name="person_in_charge"
+                            id="dealDate"
+                            type="date"
+                            value={dealDate}
+                            onChange={(e) => setDealDate(e.target.value)}
                             required
-                            value={form.person_in_charge}
-                            onChange={handleChange}
-                            placeholder="例: 山田 太郎"
-                            style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', outline: 'none', boxSizing: 'border-box' }}
+                            style={{
+                                width: '100%',
+                                padding: '8px',
+                                border: '1px solid #d1d5db',
+                                borderRadius: '4px',
+                                boxSizing: 'border-box',
+                            }}
                         />
+                    </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
+                    <div>
+                        <label htmlFor="personInChargeCode" style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' }}>
+                            担当社員 *
+                        </label>
+                        <select
+                            id="personInChargeCode"
+                            value={personInChargeCode}
+                            onChange={(e) => setPersonInChargeCode(e.target.value)}
+                            required
+                            style={{
+                                width: '100%',
+                                padding: '8px',
+                                border: '1px solid #d1d5db',
+                                borderRadius: '4px',
+                                backgroundColor: '#fff',
+                            }}
+                        >
+                            <option value="">選択してください</option>
+                            {employees.map((emp) => (
+                                <option key={emp.employee_code} value={emp.employee_code}>
+                                    {emp.employee_name}（{emp.employee_code}）
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label htmlFor="phaseCode" style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' }}>
+                            商談フェーズ *
+                        </label>
+                        <select
+                            id="phaseCode"
+                            value={phaseCode}
+                            onChange={(e) => setPhaseCode(e.target.value)}
+                            required
+                            style={{
+                                width: '100%',
+                                padding: '8px',
+                                border: '1px solid #d1d5db',
+                                borderRadius: '4px',
+                                backgroundColor: '#fff',
+                            }}
+                        >
+                            <option value="">選択してください</option>
+                            {phases.map((p) => (
+                                <option key={p.phase_code} value={p.phase_code}>
+                                    {p.phase_name}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label htmlFor="riskLevel" style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' }}>
+                            リスクレベル（AI自動判定）
+                        </label>
+                        <select
+                            id="riskLevel"
+                            value=""
+                            disabled
+                            aria-disabled="true"
+                            style={{
+                                width: '100%',
+                                padding: '8px',
+                                border: '1px solid #d1d5db',
+                                borderRadius: '4px',
+                                backgroundColor: '#f3f4f6',
+                                color: '#6b7280',
+                                cursor: 'not-allowed',
+                            }}
+                        >
+                            <option value="">AI自動判定</option>
+                        </select>
                     </div>
                 </div>
 
                 <div>
-                    <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>商談実施日</label>
-                    <input
-                        type="date"
-                        name="deal_date"
-                        required
-                        value={form.deal_date}
-                        onChange={handleChange}
-                        style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', outline: 'none', boxSizing: 'border-box' }}
-                    />
-                </div>
-
-                <div>
-                    <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>商談メモ（議事録・会話内容）</label>
+                    <label htmlFor="rawMemo" style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' }}>
+                        商談メモ *
+                    </label>
                     <textarea
-                        name="raw_memo"
+                        id="rawMemo"
                         rows={6}
+                        value={rawMemo}
+                        onChange={(e) => setRawMemo(e.target.value)}
+                        maxLength={RAW_MEMO_MAX_LENGTH}
+                        placeholder="商談の内容を入力してください。保存時にAIが要約・ネクストアクション・リスクレベルを生成します。"
                         required
-                        value={form.raw_memo}
-                        onChange={handleChange}
-                        placeholder="商談でのやり取り、お客様の課題、予算感、懸念点などを自由に入力してください..."
-                        style={{ width: '100%', padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '8px', fontSize: '14px', outline: 'none', boxSizing: 'border-box', resize: 'vertical' }}
-                    />
-                </div>
-
-                {/* キャンセルボタンと保存ボタンの間に gap: '12px' を設定してスペースを確保 */}
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', paddingTop: '16px', borderTop: '1px solid #f3f4f6' }}>
-                    <Link
-                        href="/"
                         style={{
-                            padding: '8px 16px',
-                            border: '1px solid #d1d5db',
-                            color: '#374151',
-                            borderRadius: '8px',
-                            textDecoration: 'none',
-                            fontSize: '14px',
-                            fontWeight: '500',
-                            display: 'inline-flex',
-                            alignItems: 'center'
+                            width: '100%',
+                            padding: '8px',
+                            border: `1px solid ${isMemoOverLimit ? '#dc2626' : '#d1d5db'}`,
+                            borderRadius: '4px',
+                            boxSizing: 'border-box',
+                        }}
+                    />
+                    <div
+                        style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            marginTop: '4px',
+                            fontSize: '12px',
                         }}
                     >
-                        キャンセル
-                    </Link>
+                        <span
+                            style={{
+                                color: isMemoOverLimit ? '#dc2626' : '#6b7280',
+                                fontWeight: isMemoOverLimit ? 'bold' : 'normal',
+                            }}
+                        >
+                            {isMemoOverLimit
+                                ? `商談メモは${RAW_MEMO_MAX_LENGTH}文字以内で入力してください。`
+                                : '※ 前後の空白を除いた文字数で判定されます（必須・最大2000文字）'}
+                        </span>
+                        <span
+                            style={{
+                                color: isMemoOverLimit ? '#dc2626' : '#4b5563',
+                                fontWeight: isMemoOverLimit ? 'bold' : 'normal',
+                            }}
+                        >
+                            {trimmedMemoLength} / {RAW_MEMO_MAX_LENGTH}文字
+                        </span>
+                    </div>
+                </div>
+
+                {message && (
+                    <p style={{ margin: 0, fontSize: '13px', color: '#059669', fontWeight: 'bold' }}>
+                        {message}
+                    </p>
+                )}
+
+                {errorMsg && (
+                    <p style={{ margin: 0, fontSize: '13px', color: '#dc2626', fontWeight: 'bold' }}>
+                        {errorMsg}
+                    </p>
+                )}
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
                     <button
                         type="submit"
-                        disabled={loading}
+                        disabled={submitting || isMemoOverLimit}
                         style={{
-                            padding: '8px 24px',
-                            backgroundColor: '#2563eb',
-                            color: '#ffffff',
-                            borderRadius: '8px',
+                            padding: '10px 20px',
+                            backgroundColor: '#0066cc',
+                            color: '#fff',
                             border: 'none',
-                            fontSize: '14px',
-                            fontWeight: '500',
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                            opacity: loading ? 0.5 : 1
+                            borderRadius: '6px',
+                            fontWeight: 'bold',
+                            cursor: submitting || isMemoOverLimit ? 'not-allowed' : 'pointer',
+                            opacity: submitting || isMemoOverLimit ? 0.7 : 1,
                         }}
                     >
-                        {analyzing ? (
-                            <>
-                                <span style={{ display: 'inline-block', width: '16px', height: '16px', border: '2px solid #ffffff', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></span>
-                                Geminiが解析中...
-                            </>
-                        ) : (
-                            '保存してAI解析を実行'
-                        )}
+                        {submitting ? 'AI分析・登録中...' : '商談を登録'}
                     </button>
                 </div>
             </form>
         </div>
+    );
+}
+
+export default function NewDealPage() {
+    return (
+        <Suspense
+            fallback={
+                <div style={{ padding: '40px', textAlign: 'center', fontFamily: 'sans-serif' }}>
+                    読み込み中...
+                </div>
+            }
+        >
+            <NewDealContent />
+        </Suspense>
     );
 }

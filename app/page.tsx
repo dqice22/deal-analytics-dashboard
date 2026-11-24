@@ -1,214 +1,755 @@
+/**
+ * 画面名: ダッシュボード一覧画面
+ * ファイルパス: app/page.tsx
+ * 役割: 商談一覧の表示・検索・絞り込み、新規登録・詳細/更新画面への遷移
+ */
 'use client';
 
-import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { Suspense, useEffect, useState, useCallback } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import { createClient } from '@supabase/supabase-js';
 
-interface Deal {
-    id: string;
+const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+const DELETED_EMPLOYEE_FILTER_VALUE = '__deleted__';
+
+interface CurrentUser {
+    employeeCode: string;
+    employeeName: string;
+    positionCode: string | null;
+    isAdmin: boolean;
+}
+
+interface Company {
+    company_id: number;
     company_name: string;
-    person_in_charge: string;
+}
+
+interface DealPhase {
+    phase_code: string;
+    phase_name: string;
+    sort_no: number;
+}
+
+interface Employee {
+    employee_code: string;
+    employee_name: string;
+    delete_flg: boolean;
+}
+
+interface DealListItem {
+    id: number;
+    company_id: number;
+    company_name: string;
+    deal_title: string;
+    person_in_charge_employee_id: string | null;
+    person_in_charge_name: string;
+    person_in_charge_deleted: boolean;
     deal_date: string;
-    summary: string;
-    next_action: string;
+    phase_code: string;
+    phase_name: string;
+    summary: string | null;
+    next_action: string | null;
     risk_level: string;
 }
 
-export default function DealsDashboard() {
-    const [deals, setDeals] = useState<Deal[]>([]);
+function normalizeRiskParam(rawRisk: string | null): string {
+    return rawRisk === '高' || rawRisk === '中' || rawRisk === '低' ? rawRisk : '';
+}
 
-    // 入力中の状態（フォーム内で自由に変更できる値）
-    const [searchInput, setSearchInput] = useState('');
-    const [riskInput, setRiskInput] = useState('ALL');
+function DashboardContent() {
+    const router = useRouter();
+    const searchParams = useSearchParams();
 
-    // 検索ボタン押下によって確定する状態（useEffectのトリガー）
-    const [searchTerm, setSearchTerm] = useState('');
-    const [confirmedRiskFilter, setConfirmedRiskFilter] = useState('ALL');
+    const initialRiskFromQuery = normalizeRiskParam(searchParams.get('risk'));
+    const initialPhaseFromQuery = searchParams.get('phase')?.trim() ?? '';
+    const initialEmployeeFromQuery = searchParams.get('employee')?.trim() ?? '';
 
+    const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+    const [authChecking, setAuthChecking] = useState(true);
+
+    const [companies, setCompanies] = useState<Company[]>([]);
+    const [phases, setPhases] = useState<DealPhase[]>([]);
+    const [employees, setEmployees] = useState<Employee[]>([]);
+    const [deals, setDeals] = useState<DealListItem[]>([]);
     const [loading, setLoading] = useState(true);
+    const [errorMsg, setErrorMsg] = useState('');
 
-    // 検索ボタン押下時（またはEnterキー押下時）に値を確定して検索を実行
-    const handleSearch = (e: React.FormEvent) => {
-        e.preventDefault();
-        setSearchTerm(searchInput);
-        setConfirmedRiskFilter(riskInput);
-    };
+    const [selectedCompanyId, setSelectedCompanyId] = useState<string>('');
+    const [selectedPhaseCode, setSelectedPhaseCode] = useState<string>(initialPhaseFromQuery);
+    const [selectedRiskLevel, setSelectedRiskLevel] = useState<string>(initialRiskFromQuery);
+    const [selectedEmployeeCode, setSelectedEmployeeCode] = useState<string>(initialEmployeeFromQuery);
+    const [dateFrom, setDateFrom] = useState<string>('');
+    const [dateTo, setDateTo] = useState<string>('');
+    const [searchKeyword, setSearchKeyword] = useState<string>('');
 
-    // 確定された検索ワード（searchTerm）または確定されたフィルター（confirmedRiskFilter）が変わったときだけデータ取得
     useEffect(() => {
-        const fetchDeals = async () => {
-            setLoading(true);
+        const nextRisk = normalizeRiskParam(searchParams.get('risk'));
+        const nextPhase = searchParams.get('phase')?.trim() ?? '';
+        const nextEmployee = searchParams.get('employee')?.trim() ?? '';
+
+        if (!nextRisk && !nextPhase && !nextEmployee) return;
+
+        const timer = window.setTimeout(() => {
+            if (nextRisk) setSelectedRiskLevel(nextRisk);
+            if (nextPhase) setSelectedPhaseCode(nextPhase);
+            if (nextEmployee) setSelectedEmployeeCode(nextEmployee);
+        }, 0);
+
+        return () => window.clearTimeout(timer);
+    }, [searchParams]);
+
+    useEffect(() => {
+        let active = true;
+
+        const checkAuth = async () => {
             try {
-                let query = supabase.from('deals').select('*').order('deal_date', { ascending: false });
+                const res = await fetch('/api/auth/me', { cache: 'no-store' });
+                if (!active) return;
 
-                if (searchTerm.trim() !== '') {
-                    query = query.ilike('company_name', `%${searchTerm}%`);
+                if (!res.ok) {
+                    router.replace('/login');
+                    return;
                 }
+                const data = await res.json();
+                if (!active) return;
 
-                if (confirmedRiskFilter !== 'ALL') {
-                    query = query.eq('risk_level', confirmedRiskFilter);
+                if (!data.user) {
+                    router.replace('/login');
+                    return;
                 }
-
-                const { data, error } = await query;
-
-                if (error) {
-                    console.error('Error fetching deals:', error);
-                } else {
-                    setDeals(data || []);
+                setCurrentUser(data.user);
+            } catch {
+                if (active) {
+                    router.replace('/login');
                 }
-            } catch (err) {
-                console.error(err);
             } finally {
-                setLoading(false);
+                if (active) {
+                    setAuthChecking(false);
+                }
             }
         };
 
-        fetchDeals();
-    }, [searchTerm, confirmedRiskFilter]);
+        void checkAuth();
+
+        return () => {
+            active = false;
+        };
+    }, [router]);
+
+    const fetchDashboardData = useCallback(async () => {
+        try {
+            const [
+                { data: companiesData, error: companiesError },
+                { data: phasesData, error: phasesError },
+                { data: employeesData, error: employeesError },
+                { data: dealsData, error: dealsError },
+            ] = await Promise.all([
+                supabase.from('companies').select('company_id, company_name').order('company_id'),
+                supabase.from('deal_phases').select('phase_code, phase_name, sort_no').order('sort_no'),
+                supabase
+                    .from('employees')
+                    .select('employee_code, employee_name, delete_flg')
+                    .order('employee_code'),
+                supabase
+                    .from('deals')
+                    .select(
+                        'id, company_id, deal_title, person_in_charge_employee_id, deal_date, phase_code, summary, next_action, risk_level'
+                    )
+                    .eq('delete_flg', false)
+                    .order('deal_date', { ascending: false })
+                    .order('id', { ascending: false }),
+            ]);
+
+            if (companiesError) console.error('companies取得エラー:', companiesError);
+            if (phasesError) console.error('phases取得エラー:', phasesError);
+            if (employeesError) console.error('employees取得エラー:', employeesError);
+
+            if (dealsError) {
+                console.error('deals取得エラー:', dealsError);
+                setErrorMsg(`商談一覧の取得に失敗しました: ${dealsError.message}`);
+                setDeals([]);
+                return;
+            }
+
+            const companyList: Company[] = companiesData ?? [];
+            const phaseList: DealPhase[] = phasesData ?? [];
+            const allEmployeeList: Employee[] = (employeesData ?? []).map((e) => ({
+                employee_code: String(e.employee_code).trim(),
+                employee_name: e.employee_name,
+                delete_flg: Boolean(e.delete_flg),
+            }));
+            const activeEmployeeList: Employee[] = allEmployeeList.filter((e) => !e.delete_flg);
+
+            setCompanies(companyList);
+            setPhases(phaseList);
+            setEmployees(activeEmployeeList);
+            setErrorMsg('');
+
+            const companyMap = new Map(companyList.map((c) => [c.company_id, c.company_name]));
+            const phaseMap = new Map(phaseList.map((p) => [String(p.phase_code).trim(), p.phase_name]));
+            const empMap = new Map(allEmployeeList.map((e) => [e.employee_code, e]));
+
+            const enriched: DealListItem[] = (dealsData ?? []).map((d) => {
+                const companyId = Number(d.company_id);
+                const phaseCode = String(d.phase_code ?? '').trim();
+                const empCode = d.person_in_charge_employee_id
+                    ? String(d.person_in_charge_employee_id).trim()
+                    : null;
+                const emp = empCode ? empMap.get(empCode) : undefined;
+
+                return {
+                    id: Number(d.id),
+                    company_id: companyId,
+                    company_name: companyMap.get(companyId) ?? '',
+                    deal_title: d.deal_title,
+                    person_in_charge_employee_id: empCode,
+                    person_in_charge_name: empCode ? emp?.employee_name ?? empCode : '未割当',
+                    person_in_charge_deleted: Boolean(emp?.delete_flg),
+                    deal_date: d.deal_date,
+                    phase_code: phaseCode,
+                    phase_name: phaseMap.get(phaseCode) ?? phaseCode,
+                    summary: d.summary ?? null,
+                    next_action: d.next_action ?? null,
+                    risk_level: d.risk_level,
+                };
+            });
+
+            setDeals(enriched);
+        } catch (err) {
+            console.error('ダッシュボード取得エラー:', err);
+            setErrorMsg('データの取得中にエラーが発生しました。');
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (authChecking || !currentUser) return;
+
+        let active = true;
+        const timer = window.setTimeout(() => {
+            if (active) {
+                void fetchDashboardData();
+            }
+        }, 0);
+
+        return () => {
+            active = false;
+            window.clearTimeout(timer);
+        };
+    }, [authChecking, currentUser, fetchDashboardData]);
+
+    const handleLogout = async () => {
+        try {
+            await fetch('/api/auth/logout', { method: 'POST' });
+        } finally {
+            router.replace('/login');
+            router.refresh();
+        }
+    };
+
+    const handleResetFilters = () => {
+        setSelectedCompanyId('');
+        setSelectedPhaseCode('');
+        setSelectedRiskLevel('');
+        setSelectedEmployeeCode('');
+        setDateFrom('');
+        setDateTo('');
+        setSearchKeyword('');
+        if (searchParams.get('risk') || searchParams.get('phase') || searchParams.get('employee')) {
+            router.replace('/');
+        }
+    };
+
+    const filteredDeals = deals.filter((deal) => {
+        if (selectedCompanyId && String(deal.company_id) !== selectedCompanyId) {
+            return false;
+        }
+        if (selectedPhaseCode && deal.phase_code !== selectedPhaseCode) {
+            return false;
+        }
+        if (selectedRiskLevel && deal.risk_level !== selectedRiskLevel) {
+            return false;
+        }
+        if (selectedEmployeeCode) {
+            if (selectedEmployeeCode === DELETED_EMPLOYEE_FILTER_VALUE) {
+                if (!deal.person_in_charge_deleted) return false;
+            } else if (deal.person_in_charge_employee_id !== selectedEmployeeCode) {
+                return false;
+            }
+        }
+        if (dateFrom && (!deal.deal_date || deal.deal_date < dateFrom)) {
+            return false;
+        }
+        if (dateTo && (!deal.deal_date || deal.deal_date > dateTo)) {
+            return false;
+        }
+        if (searchKeyword.trim()) {
+            const kw = searchKeyword.trim().toLowerCase();
+            const target = [
+                deal.deal_title,
+                deal.company_name,
+                deal.person_in_charge_name,
+                deal.summary ?? '',
+                deal.next_action ?? '',
+            ]
+                .join(' ')
+                .toLowerCase();
+            if (!target.includes(kw)) return false;
+        }
+        return true;
+    });
+
+    const hasActiveFilter =
+        Boolean(selectedCompanyId) ||
+        Boolean(selectedPhaseCode) ||
+        Boolean(selectedRiskLevel) ||
+        Boolean(selectedEmployeeCode) ||
+        Boolean(dateFrom) ||
+        Boolean(dateTo) ||
+        Boolean(searchKeyword.trim());
+
+    if (authChecking) {
+        return (
+            <div style={{ padding: '40px', textAlign: 'center', fontFamily: 'sans-serif' }}>
+                認証状態を確認中...
+            </div>
+        );
+    }
 
     return (
-        <div style={{ maxWidth: '1152px', margin: '0 auto', padding: '24px', boxSizing: 'border-box', width: '100%' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                <h1 style={{ fontSize: '24px', fontWeight: 'bold', color: '#030712', margin: 0 }}>商談ダッシュボード</h1>
-                <Link
-                    href="/deals/new"
-                    style={{ backgroundColor: '#2563eb', color: '#ffffff', padding: '8px 16px', borderRadius: '6px', textDecoration: 'none', fontWeight: '500' }}
-                >
-                    + 新規商談を登録
-                </Link>
-            </div>
-
-            {/* 🔍 検索フォーム（幅100%固定・ボタン押下時のみ検索） */}
-            <form
-                onSubmit={handleSearch}
+        <div style={{ maxWidth: '960px', margin: '0 auto', padding: '24px', fontFamily: 'sans-serif' }}>
+            {/* ヘッダー */}
+            <header
                 style={{
-                    backgroundColor: '#ffffff',
-                    padding: '16px',
-                    borderRadius: '8px',
-                    border: '1px solid #e5e7eb',
-                    marginBottom: '24px',
                     display: 'flex',
-                    alignItems: 'flex-end',
-                    gap: '16px',
-                    width: '100%',
-                    boxSizing: 'border-box'
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    paddingBottom: '16px',
+                    borderBottom: '1px solid #e5e7eb',
+                    marginBottom: '20px',
+                    gap: '12px',
+                    flexWrap: 'wrap',
                 }}
             >
-                {/* 会社名検索 */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                    <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>会社名検索</label>
-                    <input
-                        type="text"
-                        placeholder="例: 株式会社... (あいまい検索)"
-                        value={searchInput}
-                        onChange={(e) => setSearchInput(e.target.value)}
-                        style={{
-                            width: '100%',
-                            border: '1px solid #d1d5db',
-                            borderRadius: '6px',
-                            padding: '8px 12px',
-                            fontSize: '14px',
-                            outline: 'none',
-                            color: '#030712',
-                            boxSizing: 'border-box',
-                            backgroundColor: '#ffffff'
-                        }}
-                    />
+                <div>
+                    <h1 style={{ margin: '0 0 4px 0', fontSize: '22px' }}>商談ダッシュボード</h1>
+                    <div style={{ fontSize: '13px', color: '#4b5563' }}>
+                        ログイン中: <strong>{currentUser?.employeeName}</strong>（{currentUser?.employeeCode}）
+                    </div>
                 </div>
 
-                {/* リスクレベル（選択しても即時検索されず、検索ボタン押下で反映されます） */}
-                <div style={{ width: '200px', flexShrink: 0 }}>
-                    <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '4px' }}>リスクレベル</label>
-                    <select
-                        value={riskInput}
-                        onChange={(e) => setRiskInput(e.target.value)}
+                <nav style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <Link
+                        href="/deals/new"
                         style={{
-                            width: '100%',
-                            border: '1px solid #d1d5db',
+                            padding: '8px 14px',
+                            backgroundColor: '#0066cc',
+                            color: '#fff',
                             borderRadius: '6px',
-                            padding: '8px 12px',
-                            fontSize: '14px',
-                            outline: 'none',
-                            backgroundColor: '#ffffff',
-                            color: '#030712',
-                            boxSizing: 'border-box'
+                            textDecoration: 'none',
+                            fontSize: '13px',
+                            fontWeight: 'bold',
                         }}
                     >
-                        <option value="ALL">すべて表示</option>
-                        <option value="高">高</option>
-                        <option value="中">中</option>
-                        <option value="低">低</option>
+                        + 新規商談登録
+                    </Link>
+
+                    <Link
+                        href="/analytics"
+                        style={{
+                            padding: '8px 12px',
+                            backgroundColor: '#f3f4f6',
+                            color: '#111827',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '6px',
+                            textDecoration: 'none',
+                            fontSize: '13px',
+                            fontWeight: 'bold',
+                        }}
+                    >
+                        分析・統計
+                    </Link>
+
+                    {currentUser?.isAdmin && (
+                        <Link
+                            href="/admin/employees"
+                            style={{
+                                padding: '8px 12px',
+                                backgroundColor: '#eff6ff',
+                                color: '#1d4ed8',
+                                border: '1px solid #bfdbfe',
+                                borderRadius: '6px',
+                                textDecoration: 'none',
+                                fontSize: '13px',
+                                fontWeight: 'bold',
+                            }}
+                        >
+                            社員マスタ管理
+                        </Link>
+                    )}
+
+                    <button
+                        type="button"
+                        onClick={handleLogout}
+                        style={{
+                            padding: '8px 12px',
+                            backgroundColor: '#fff',
+                            color: '#374151',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '6px',
+                            fontSize: '13px',
+                            cursor: 'pointer',
+                        }}
+                    >
+                        ログアウト
+                    </button>
+                </nav>
+            </header>
+
+            {/* 絞り込みバー（2行構成） */}
+            <section
+                style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px',
+                    marginBottom: '18px',
+                    padding: '14px',
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '8px',
+                    backgroundColor: '#f9fafb',
+                }}
+            >
+                {/* 1行目: キーワード・企業・担当者・フェーズ・リスク */}
+                <div
+                    style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+                        gap: '8px',
+                    }}
+                >
+                    <input
+                        type="text"
+                        value={searchKeyword}
+                        onChange={(e) => setSearchKeyword(e.target.value)}
+                        placeholder="案件名・要約で検索"
+                        style={{
+                            width: '100%',
+                            minWidth: 0,
+                            padding: '8px 10px',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '6px',
+                            fontSize: '13px',
+                            backgroundColor: '#fff',
+                            boxSizing: 'border-box',
+                        }}
+                    />
+
+                    <select
+                        aria-label="企業で絞り込み"
+                        value={selectedCompanyId}
+                        onChange={(e) => setSelectedCompanyId(e.target.value)}
+                        style={{
+                            width: '100%',
+                            minWidth: 0,
+                            padding: '8px 8px',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '6px',
+                            fontSize: '13px',
+                            backgroundColor: '#fff',
+                            boxSizing: 'border-box',
+                        }}
+                    >
+                        <option value="">すべての企業</option>
+                        {companies.map((c) => (
+                            <option key={c.company_id} value={String(c.company_id)}>
+                                {c.company_name}
+                            </option>
+                        ))}
+                    </select>
+
+                    <select
+                        aria-label="担当者で絞り込み"
+                        value={selectedEmployeeCode}
+                        onChange={(e) => setSelectedEmployeeCode(e.target.value)}
+                        style={{
+                            width: '100%',
+                            minWidth: 0,
+                            padding: '8px 8px',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '6px',
+                            fontSize: '13px',
+                            backgroundColor: '#fff',
+                            boxSizing: 'border-box',
+                        }}
+                    >
+                        <option value="">すべての担当者</option>
+                        {employees.map((emp) => (
+                            <option key={emp.employee_code} value={emp.employee_code}>
+                                {emp.employee_name}
+                            </option>
+                        ))}
+                        <option value={DELETED_EMPLOYEE_FILTER_VALUE}>退職済み社員</option>
+                    </select>
+
+                    <select
+                        aria-label="フェーズで絞り込み"
+                        value={selectedPhaseCode}
+                        onChange={(e) => setSelectedPhaseCode(e.target.value)}
+                        style={{
+                            width: '100%',
+                            minWidth: 0,
+                            padding: '8px 8px',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '6px',
+                            fontSize: '13px',
+                            backgroundColor: '#fff',
+                            boxSizing: 'border-box',
+                        }}
+                    >
+                        <option value="">すべてのフェーズ</option>
+                        {phases.map((p) => (
+                            <option key={p.phase_code} value={p.phase_code}>
+                                {p.phase_name}
+                            </option>
+                        ))}
+                    </select>
+
+                    <select
+                        aria-label="リスクで絞り込み"
+                        value={selectedRiskLevel}
+                        onChange={(e) => setSelectedRiskLevel(e.target.value)}
+                        style={{
+                            width: '100%',
+                            minWidth: 0,
+                            padding: '8px 8px',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '6px',
+                            fontSize: '13px',
+                            backgroundColor: '#fff',
+                            boxSizing: 'border-box',
+                        }}
+                    >
+                        <option value="">すべてのリスク</option>
+                        <option value="高">リスク: 高</option>
+                        <option value="中">リスク: 中</option>
+                        <option value="低">リスク: 低</option>
                     </select>
                 </div>
 
-                {/* 検索ボタン */}
-                <div style={{ flexShrink: 0 }}>
-                    <button
-                        type="submit"
+                {/* 2行目: 商談日（開始～終了）・リセット */}
+                <div
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        flexWrap: 'wrap',
+                        fontSize: '13px',
+                    }}
+                >
+                    <span style={{ color: '#374151', fontWeight: 'bold' }}>商談日:</span>
+                    <input
+                        type="date"
+                        aria-label="商談日（開始）"
+                        value={dateFrom}
+                        onChange={(e) => setDateFrom(e.target.value)}
                         style={{
-                            backgroundColor: '#1f2937',
-                            color: '#ffffff',
-                            padding: '0 24px',
-                            height: '38px',
+                            padding: '6px 10px',
+                            border: '1px solid #d1d5db',
                             borderRadius: '6px',
-                            border: 'none',
-                            fontSize: '14px',
-                            fontWeight: '500',
-                            cursor: 'pointer'
+                            fontSize: '13px',
+                            backgroundColor: '#fff',
                         }}
-                    >
-                        検索
-                    </button>
-                </div>
-            </form>
+                    />
+                    <span style={{ color: '#6b7280' }}>〜</span>
+                    <input
+                        type="date"
+                        aria-label="商談日（終了）"
+                        value={dateTo}
+                        onChange={(e) => setDateTo(e.target.value)}
+                        style={{
+                            padding: '6px 10px',
+                            border: '1px solid #d1d5db',
+                            borderRadius: '6px',
+                            fontSize: '13px',
+                            backgroundColor: '#fff',
+                        }}
+                    />
 
-            {/* 商談一覧表示エリア */}
-            <div style={{ width: '100%', boxSizing: 'border-box' }}>
-                {loading ? (
-                    <div style={{ backgroundColor: '#ffffff', padding: '48px', borderRadius: '8px', border: '1px solid #e5e7eb', textAlign: 'center', color: '#6b7280', width: '100%', boxSizing: 'border-box' }}>
-                        読み込み中...
-                    </div>
-                ) : deals.length === 0 ? (
-                    <div style={{ backgroundColor: '#ffffff', padding: '48px', borderRadius: '8px', border: '1px solid #e5e7eb', textAlign: 'center', color: '#6b7280', width: '100%', boxSizing: 'border-box' }}>
-                        条件に一致する商談データが見つかりませんでした。
-                    </div>
-                ) : (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px', width: '100%', boxSizing: 'border-box' }}>
-                        {deals.map((deal) => (
-                            <div key={deal.id} style={{ backgroundColor: '#ffffff', padding: '20px', borderRadius: '8px', border: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxSizing: 'border-box' }}>
-                                <div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                                        <h2 style={{ fontSize: '18px', fontWeight: '600', color: '#030712', margin: 0 }}>{deal.company_name}</h2>
-                                        <span
-                                            style={{
-                                                padding: '2px 10px',
-                                                borderRadius: '9999px',
-                                                fontSize: '12px',
-                                                fontWeight: '500',
-                                                backgroundColor: deal.risk_level === '高' ? '#fee2e2' : deal.risk_level === '中' ? '#fef3c7' : '#dcfce7',
-                                                color: deal.risk_level === '高' ? '#991b1b' : deal.risk_level === '中' ? '#92400e' : '#166534'
-                                            }}
-                                        >
-                                            リスク: {deal.risk_level}
-                                        </span>
-                                    </div>
-                                    <p style={{ fontSize: '12px', color: '#6b7280', marginBottom: '12px', marginTop: 0 }}>
-                                        担当者: {deal.person_in_charge || '未設定'} | 商談日: {deal.deal_date}
-                                    </p>
-                                    <p style={{ fontSize: '14px', color: '#374151', marginBottom: '12px', backgroundColor: '#f9fafb', padding: '12px', borderRadius: '6px', margin: '0 0 12px 0' }}>
-                                        <strong>要約:</strong> {deal.summary}
-                                    </p>
+                    {hasActiveFilter && (
+                        <button
+                            type="button"
+                            onClick={handleResetFilters}
+                            style={{
+                                marginLeft: 'auto',
+                                padding: '6px 12px',
+                                backgroundColor: '#fff',
+                                color: '#374151',
+                                border: '1px solid #d1d5db',
+                                borderRadius: '6px',
+                                fontSize: '12px',
+                                cursor: 'pointer',
+                            }}
+                        >
+                            条件をリセット
+                        </button>
+                    )}
+                </div>
+            </section>
+
+            {errorMsg && (
+                <div
+                    style={{
+                        padding: '12px 16px',
+                        marginBottom: '16px',
+                        borderRadius: '6px',
+                        backgroundColor: '#fef2f2',
+                        color: '#dc2626',
+                        border: '1px solid #fecaca',
+                        fontSize: '13px',
+                        fontWeight: 'bold',
+                    }}
+                >
+                    {errorMsg}
+                </div>
+            )}
+
+            {/* 商談一覧（重要情報のみ） */}
+            {loading ? (
+                <div style={{ padding: '40px', textAlign: 'center', color: '#666' }}>読み込み中...</div>
+            ) : filteredDeals.length === 0 ? (
+                <div style={{ padding: '40px', textAlign: 'center', color: '#666' }}>
+                    条件に一致する商談がありません。
+                </div>
+            ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {filteredDeals.map((deal) => (
+                        <div
+                            key={deal.id}
+                            style={{
+                                border: '1px solid #e5e7eb',
+                                borderRadius: '8px',
+                                padding: '14px 16px',
+                                backgroundColor: '#fff',
+                            }}
+                        >
+                            {/* 1行目: 案件名・企業名・フェーズ・リスク */}
+                            <div
+                                style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    flexWrap: 'wrap',
+                                    marginBottom: '6px',
+                                }}
+                            >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                    <Link
+                                        href={`/deals/${deal.id}`}
+                                        style={{ fontSize: '15px', fontWeight: 'bold', color: '#0066cc', textDecoration: 'none' }}
+                                    >
+                                        {deal.deal_title}
+                                    </Link>
+                                    <span style={{ fontSize: '13px', color: '#4b5563' }}>{deal.company_name}</span>
                                 </div>
-                                <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: '12px', marginTop: '8px' }}>
-                                    <p style={{ fontSize: '12px', color: '#2563eb', fontWeight: '500', margin: 0 }}>
-                                        ネクストアクション: {deal.next_action}
-                                    </p>
+
+                                <div style={{ display: 'flex', gap: '6px', fontSize: '12px' }}>
+                                    <span
+                                        style={{
+                                            padding: '2px 8px',
+                                            borderRadius: '4px',
+                                            backgroundColor: '#eef2ff',
+                                            color: '#3730a3',
+                                            fontWeight: 'bold',
+                                        }}
+                                    >
+                                        {deal.phase_name}
+                                    </span>
+                                    <span
+                                        style={{
+                                            padding: '2px 8px',
+                                            borderRadius: '4px',
+                                            backgroundColor:
+                                                deal.risk_level === '高'
+                                                    ? '#fee2e2'
+                                                    : deal.risk_level === '中'
+                                                        ? '#fef3c7'
+                                                        : '#dcfce7',
+                                            color:
+                                                deal.risk_level === '高'
+                                                    ? '#991b1b'
+                                                    : deal.risk_level === '中'
+                                                        ? '#92400e'
+                                                        : '#166534',
+                                            fontWeight: 'bold',
+                                        }}
+                                    >
+                                        リスク: {deal.risk_level}
+                                    </span>
                                 </div>
                             </div>
-                        ))}
-                    </div>
-                )}
-            </div>
+
+                            {/* 2行目: 商談日・担当 */}
+                            <div
+                                style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    flexWrap: 'wrap',
+                                    fontSize: '12px',
+                                    color: '#6b7280',
+                                    marginBottom: '8px',
+                                }}
+                            >
+                                <span>
+                                    商談日: {deal.deal_date} ／ 担当: {deal.person_in_charge_name}
+                                </span>
+                                {deal.person_in_charge_deleted && (
+                                    <span
+                                        style={{
+                                            padding: '1px 6px',
+                                            fontSize: '11px',
+                                            fontWeight: 'bold',
+                                            color: '#991b1b',
+                                            backgroundColor: '#fee2e2',
+                                            border: '1px solid #fca5a5',
+                                            borderRadius: '4px',
+                                        }}
+                                    >
+                                        退職済み
+                                    </span>
+                                )}
+                            </div>
+
+                            {/* 要約・ネクストアクションのみ */}
+                            {deal.summary && (
+                                <p style={{ margin: '0 0 6px 0', fontSize: '13px', color: '#374151', lineHeight: 1.5 }}>
+                                    {deal.summary}
+                                </p>
+                            )}
+                            {deal.next_action && (
+                                <p style={{ margin: 0, fontSize: '12px', color: '#1d4ed8', fontWeight: 'bold' }}>
+                                    次アクション: {deal.next_action}
+                                </p>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
         </div>
+    );
+}
+
+export default function DashboardPage() {
+    return (
+        <Suspense fallback={<div style={{ padding: '40px', textAlign: 'center', fontFamily: 'sans-serif' }}>読み込み中...</div>}>
+            <DashboardContent />
+        </Suspense>
     );
 }
