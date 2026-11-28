@@ -4,16 +4,10 @@
  * 役割: 管理者認証・権限チェックのもとでの社員一覧取得、新規登録、情報更新および論理削除
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import bcrypt from 'bcryptjs';
 import { jwtVerify } from 'jose';
 
-const supabaseAdmin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
-
-const secretKey = new TextEncoder().encode(process.env.AUTH_SECRET!);
 const COOKIE_NAME = 'sfa_session';
 
 const EMPLOYEE_CODE_REGEX = /^\d{6}$/;
@@ -23,6 +17,38 @@ const PASSWORD_MIN = 8;
 const PASSWORD_MAX = 64;
 const PASSWORD_HALF_WIDTH_PRINTABLE_REGEX = /^[!-~]+$/;
 const PASSWORD_HASH_MAX = 128;
+
+let cachedSupabaseAdmin: SupabaseClient | null = null;
+
+/**
+ * Supabase管理用クライアントを遅延初期化する関数。
+ */
+function getSupabaseAdmin(): SupabaseClient {
+    if (cachedSupabaseAdmin) {
+        return cachedSupabaseAdmin;
+    }
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!supabaseUrl || !serviceRoleKey) {
+        throw new Error('Supabase environment variables are not set.');
+    }
+
+    cachedSupabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
+    return cachedSupabaseAdmin;
+}
+
+/**
+ * JWT検証用のシークレットキーを生成する関数。
+ */
+function getSecretKey(): Uint8Array {
+    const authSecret = process.env.AUTH_SECRET;
+    if (!authSecret) {
+        throw new Error('AUTH_SECRET is not set.');
+    }
+    return new TextEncoder().encode(authSecret);
+}
 
 /**
  * 入力値（unknown）が文字列であれば前後空白を除去し、それ以外は空文字を返す正規化関数。
@@ -49,6 +75,7 @@ async function getCurrentAdmin(req: NextRequest): Promise<{
     if (!token) return null;
 
     try {
+        const secretKey = getSecretKey();
         const { payload } = await jwtVerify(token, secretKey);
         const employeeCode = normalizeCode(payload.employeeCode);
         const isAdmin = Boolean(payload.isAdmin);
@@ -121,6 +148,7 @@ function validateCreatePayload(body: Record<string, unknown>):
  * 指定された役職コードがpositionsテーブルに存在するかをSupabaseで確認する非同期関数。
  */
 async function existsPositionCode(positionCode: string): Promise<boolean> {
+    const supabaseAdmin = getSupabaseAdmin();
     const { data, error } = await supabaseAdmin
         .from('positions')
         .select('position_code')
@@ -142,6 +170,8 @@ export async function GET(req: NextRequest) {
         if (!auth.isAdmin) {
             return NextResponse.json({ error: '管理者権限が必要です。' }, { status: 403 });
         }
+
+        const supabaseAdmin = getSupabaseAdmin();
 
         const [
             { data: employeesData, error: empError },
@@ -239,6 +269,8 @@ export async function POST(req: NextRequest) {
             ? auth.employeeCode
             : null;
 
+        const supabaseAdmin = getSupabaseAdmin();
+
         const { error: insertError } = await supabaseAdmin.from('employees').insert({
             employee_code,
             employee_name,
@@ -289,6 +321,8 @@ export async function PATCH(req: NextRequest) {
         const updatedByCode = EMPLOYEE_CODE_REGEX.test(auth.employeeCode)
             ? auth.employeeCode
             : null;
+
+        const supabaseAdmin = getSupabaseAdmin();
 
         // 論理削除
         if (body.delete_flg === true) {

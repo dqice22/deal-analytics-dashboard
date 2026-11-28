@@ -9,14 +9,42 @@ import { jwtVerify } from 'jose';
 import { createClient } from '@supabase/supabase-js';
 import { GoogleGenAI } from '@google/genai';
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-const secretKey = new TextEncoder().encode(process.env.AUTH_SECRET!);
 const COOKIE_NAME = 'sfa_session';
 const RAW_MEMO_MAX_LENGTH = 2000;
 const SUMMARY_MAX_LENGTH = 1000;
 const NEXT_ACTION_MAX_LENGTH = 500;
 const PROMPT_SUMMARY_MAX_LENGTH = 300;
 const PROMPT_NEXT_ACTION_MAX_LENGTH = 150;
+
+let cachedAiClient: GoogleGenAI | null = null;
+
+/**
+ * Gemini APIクライアントを遅延初期化する関数。
+ */
+function getAiClient(): GoogleGenAI {
+    if (cachedAiClient) {
+        return cachedAiClient;
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+        throw new Error('GEMINI_API_KEY is not set.');
+    }
+
+    cachedAiClient = new GoogleGenAI({ apiKey });
+    return cachedAiClient;
+}
+
+/**
+ * JWT検証用のシークレットキーを生成する関数。
+ */
+function getSecretKey(): Uint8Array {
+    const authSecret = process.env.AUTH_SECRET;
+    if (!authSecret) {
+        throw new Error('AUTH_SECRET is not set.');
+    }
+    return new TextEncoder().encode(authSecret);
+}
 
 /**
  * 入力値（unknown）が文字列であれば前後空白を除去し、それ以外は空文字を返す正規化関数。
@@ -41,6 +69,7 @@ async function getEmployeeCodeFromCookie(): Promise<string | null> {
         const token = cookieStore.get(COOKIE_NAME)?.value;
         if (!token) return null;
 
+        const secretKey = getSecretKey();
         const { payload } = await jwtVerify(token, secretKey);
         const code = normalizeCode(payload.employeeCode);
         return code || null;
@@ -123,6 +152,7 @@ export async function POST(request: Request) {
         }
 
         // 1. Gemini APIに商談メモの分析を依頼（リトライロジック付き）
+        const ai = getAiClient();
         const prompt = `
 以下の商談メモを分析し、JSON形式のみで正確に以下の3つの項目を出力してください。Markdownのバッククォート（\`\`\`json など）や余計な文章は一切含めず、純粋なJSON文字列だけを返してください。
 

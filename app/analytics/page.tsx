@@ -7,12 +7,28 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+let cachedSupabaseClient: SupabaseClient | null = null;
+
+/**
+ * ブラウザ/クライアント向けのSupabaseクライアントを遅延初期化する関数。
+ */
+function getSupabaseClient(): SupabaseClient {
+    if (cachedSupabaseClient) {
+        return cachedSupabaseClient;
+    }
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+        throw new Error('Supabase の公開環境変数が設定されていません。');
+    }
+
+    cachedSupabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+    return cachedSupabaseClient;
+}
 
 interface CurrentUser {
     employeeCode: string;
@@ -124,6 +140,8 @@ export default function AnalyticsDashboardPage() {
      */
     const fetchAnalytics = useCallback(async () => {
         try {
+            const supabase = getSupabaseClient();
+
             const [
                 { data: dealsData, error: dealsError },
                 { data: phasesData, error: phasesError },

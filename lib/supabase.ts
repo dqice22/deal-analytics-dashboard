@@ -1,10 +1,22 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+let cachedSupabase: SupabaseClient | null = null;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error('Supabaseの環境変数が設定されていません。.env.local を確認してください。');
+/**
+ * Supabaseクライアントを遅延初期化する関数。
+ */
+export function getSupabaseClient(): SupabaseClient {
+    if (cachedSupabase) {
+        return cachedSupabase;
+    }
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+        throw new Error('Supabaseの環境変数が設定されていません。.env.local を確認してください。');
+    }
+
+    cachedSupabase = createClient(supabaseUrl, supabaseAnonKey);
+    return cachedSupabase;
 }
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);

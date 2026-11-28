@@ -4,19 +4,45 @@
  * 役割: 社員コード・パスワード検証、JWT発行およびセッションCookie（sfa_session）の設定
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import bcrypt from 'bcryptjs';
 import { SignJWT } from 'jose';
 
-const supabaseAdmin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
-
-const secretKey = new TextEncoder().encode(process.env.AUTH_SECRET!);
 const COOKIE_NAME = 'sfa_session';
 const EMPLOYEE_CODE_REGEX = /^\d{6}$/;
 const PASSWORD_MAX_LENGTH = 64;
+
+let cachedSupabaseAdmin: SupabaseClient | null = null;
+
+/**
+ * Supabase管理用クライアントを遅延初期化する関数。
+ */
+function getSupabaseAdmin(): SupabaseClient {
+    if (cachedSupabaseAdmin) {
+        return cachedSupabaseAdmin;
+    }
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!supabaseUrl || !serviceRoleKey) {
+        throw new Error('Supabase environment variables are not set.');
+    }
+
+    cachedSupabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
+    return cachedSupabaseAdmin;
+}
+
+/**
+ * JWT署名用のシークレットキーを生成する関数。
+ */
+function getSecretKey(): Uint8Array {
+    const authSecret = process.env.AUTH_SECRET;
+    if (!authSecret) {
+        throw new Error('AUTH_SECRET is not set.');
+    }
+    return new TextEncoder().encode(authSecret);
+}
 
 /**
  * 入力値（unknown）が文字列であれば前後空白を除去し、それ以外は空文字を返す正規化関数。
@@ -30,13 +56,8 @@ function normalizeCode(value: unknown): string {
  */
 export async function POST(req: NextRequest) {
     try {
-        if (!process.env.AUTH_SECRET) {
-            console.error('AUTH_SECRET is not set.');
-            return NextResponse.json(
-                { error: '認証設定に問題があります。' },
-                { status: 500 }
-            );
-        }
+        const secretKey = getSecretKey();
+        const supabaseAdmin = getSupabaseAdmin();
 
         const body = (await req.json()) as Record<string, unknown>;
         const employeeCode = normalizeCode(body.employeeCode ?? body.employee_code);

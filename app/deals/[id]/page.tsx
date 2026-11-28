@@ -8,12 +8,28 @@
 import { Suspense, useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+let cachedSupabaseClient: SupabaseClient | null = null;
+
+/**
+ * ブラウザ/クライアント向けのSupabaseクライアントを遅延初期化する関数。
+ */
+function getSupabaseClient(): SupabaseClient {
+    if (cachedSupabaseClient) {
+        return cachedSupabaseClient;
+    }
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+        throw new Error('Supabase の公開環境変数が設定されていません。');
+    }
+
+    cachedSupabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+    return cachedSupabaseClient;
+}
 
 const DEAL_TITLE_MAX_LENGTH = 150;
 const RAW_MEMO_MAX_LENGTH = 2000;
@@ -227,6 +243,8 @@ function DealDetailContent() {
         setNotFound(false);
 
         try {
+            const supabase = getSupabaseClient();
+
             const [
                 { data: dealData, error: dealError },
                 { data: phasesData, error: phasesError },
@@ -422,6 +440,7 @@ function DealDetailContent() {
         setSaving(true);
 
         try {
+            const supabase = getSupabaseClient();
             const editorCode = normalizeText(currentUser.employeeCode) || null;
             const { error } = await supabase
                 .from('deals')
@@ -476,6 +495,7 @@ function DealDetailContent() {
         setDeleting(true);
 
         try {
+            const supabase = getSupabaseClient();
             const editorCode = normalizeText(currentUser.employeeCode) || null;
             const { error } = await supabase
                 .from('deals')
