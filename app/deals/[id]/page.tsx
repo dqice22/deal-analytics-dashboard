@@ -83,6 +83,19 @@ function normalizeText(value: unknown): string {
 }
 
 /**
+ * DBのリスク値（「1」「2」「3」「高い」「中」「低い」「高」「低」など）を「高」「中」「低」に正規化する関数。
+ */
+function normalizeRiskLevel(rawRisk: unknown): string {
+    const value = typeof rawRisk === 'string' ? rawRisk.trim() : String(rawRisk ?? '').trim();
+
+    if (value === '高' || value === '高い' || value === '1') return '高';
+    if (value === '中' || value === '2') return '中';
+    if (value === '低' || value === '低い' || value === '3') return '低';
+
+    return value;
+}
+
+/**
  * 商談メモの入力値（必須・最大文字数）を検証し、問題があればエラーメッセージを返す関数。
  */
 function validateRawMemo(value: string): string | null {
@@ -303,7 +316,7 @@ function DealDetailContent() {
             const normalizedChargeId = normalizeText(dealData.person_in_charge_employee_id) || null;
             const normalizedEditorId = normalizeText(dealData.last_edited_employee_id) || null;
             const normalizedPhaseId = normalizeText(dealData.phase_code);
-            const normalizedRisk = normalizeText(dealData.risk_level);
+            const normalizedRisk = normalizeRiskLevel(dealData.risk_level);
 
             const enriched: DealDetail = {
                 ...dealData,

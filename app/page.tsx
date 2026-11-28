@@ -74,10 +74,24 @@ interface DealListItem {
 }
 
 /**
+ * DBやURLのリスク値（「1」「2」「3」「高い」「中」「低い」「高」「低」など）を「高」「中」「低」に正規化する関数。
+ */
+function normalizeRiskLevel(rawRisk: unknown): string {
+    const value = typeof rawRisk === 'string' ? rawRisk.trim() : String(rawRisk ?? '').trim();
+
+    if (value === '高' || value === '高い' || value === '1') return '高';
+    if (value === '中' || value === '2') return '中';
+    if (value === '低' || value === '低い' || value === '3') return '低';
+
+    return value;
+}
+
+/**
  * URLクエリのリスク指定値を検証し、「高」「中」「低」のいずれかであればそのまま返し、それ以外は空文字に正規化する関数。
  */
 function normalizeRiskParam(rawRisk: string | null): string {
-    return rawRisk === '高' || rawRisk === '中' || rawRisk === '低' ? rawRisk : '';
+    const normalized = normalizeRiskLevel(rawRisk);
+    return normalized === '高' || normalized === '中' || normalized === '低' ? normalized : '';
 }
 
 /**
@@ -108,22 +122,6 @@ function DashboardContent() {
     const [dateFrom, setDateFrom] = useState<string>('');
     const [dateTo, setDateTo] = useState<string>('');
     const [searchKeyword, setSearchKeyword] = useState<string>('');
-
-    useEffect(() => {
-        const nextRisk = normalizeRiskParam(searchParams.get('risk'));
-        const nextPhase = searchParams.get('phase')?.trim() ?? '';
-        const nextEmployee = searchParams.get('employee')?.trim() ?? '';
-
-        if (!nextRisk && !nextPhase && !nextEmployee) return;
-
-        const timer = window.setTimeout(() => {
-            if (nextRisk) setSelectedRiskLevel(nextRisk);
-            if (nextPhase) setSelectedPhaseCode(nextPhase);
-            if (nextEmployee) setSelectedEmployeeCode(nextEmployee);
-        }, 0);
-
-        return () => window.clearTimeout(timer);
-    }, [searchParams]);
 
     useEffect(() => {
         let active = true;
@@ -245,7 +243,7 @@ function DashboardContent() {
                     phase_name: phaseMap.get(phaseCode) ?? phaseCode,
                     summary: d.summary ?? null,
                     next_action: d.next_action ?? null,
-                    risk_level: d.risk_level,
+                    risk_level: normalizeRiskLevel(d.risk_level),
                 };
             });
 

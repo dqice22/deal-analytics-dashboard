@@ -69,6 +69,19 @@ interface FilterQuery {
 }
 
 /**
+ * DBのリスク値（「1」「2」「3」「高い」「中」「低い」「高」「低」など）を「高」「中」「低」に正規化する関数。
+ */
+function normalizeRiskLevel(rawRisk: unknown): string {
+    const value = typeof rawRisk === 'string' ? rawRisk.trim() : String(rawRisk ?? '').trim();
+
+    if (value === '高' || value === '高い' || value === '1') return '高';
+    if (value === '中' || value === '2') return '中';
+    if (value === '低' || value === '低い' || value === '3') return '低';
+
+    return value;
+}
+
+/**
  * 指定されたキーが絞り込み対象のリスクレベル（「高」「中」「低」）であるかを判定する型ガード関数。
  */
 function isFilterableRiskLevel(key: string): key is '高' | '中' | '低' {
@@ -171,7 +184,7 @@ export default function AnalyticsDashboardPage() {
                     ? String(d.person_in_charge_employee_id).trim()
                     : null,
                 phase_code: String(d.phase_code ?? '').trim(),
-                risk_level: String(d.risk_level ?? '').trim(),
+                risk_level: normalizeRiskLevel(d.risk_level),
             }));
             const phases: DealPhase[] = (phasesData ?? []).map((p) => ({
                 ...p,
