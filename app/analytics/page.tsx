@@ -52,10 +52,16 @@ interface FilterQuery {
     employee?: string;
 }
 
+/**
+ * 指定されたキーが絞り込み対象のリスクレベル（「高」「中」「低」）であるかを判定する型ガード関数。
+ */
 function isFilterableRiskLevel(key: string): key is '高' | '中' | '低' {
     return key === '高' || key === '中' || key === '低';
 }
 
+/**
+ * 認証確認、商談・マスタデータの集計処理、およびKPI・内訳グラフの表示と一覧遷移を行うページコンポーネント。
+ */
 export default function AnalyticsDashboardPage() {
     const router = useRouter();
 
@@ -75,6 +81,9 @@ export default function AnalyticsDashboardPage() {
     useEffect(() => {
         let active = true;
 
+        /**
+         * 現在のログインセッション（/api/auth/me）を確認し、未認証の場合はログイン画面へ遷移する非同期関数。
+         */
         const checkAuth = async () => {
             try {
                 const res = await fetch('/api/auth/me', { cache: 'no-store' });
@@ -110,6 +119,9 @@ export default function AnalyticsDashboardPage() {
         };
     }, [router]);
 
+    /**
+     * 有効な商談データとフェーズ・社員マスタをSupabaseから取得し、KPIおよびリスク・フェーズ・担当者別の集計データを生成する関数。
+     */
     const fetchAnalytics = useCallback(async () => {
         try {
             const [
@@ -240,6 +252,9 @@ export default function AnalyticsDashboardPage() {
         };
     }, [authChecking, currentUser, fetchAnalytics]);
 
+    /**
+     * 絞り込み条件をクエリパラメータとして付与したうえでダッシュボード一覧画面（/）へ遷移する関数。
+     */
     const navigateToDashboard = (filter?: FilterQuery) => {
         const params = new URLSearchParams();
         if (filter?.risk) params.set('risk', filter.risk);
@@ -250,6 +265,9 @@ export default function AnalyticsDashboardPage() {
         window.location.assign(queryString ? `/?${queryString}` : '/');
     };
 
+    /**
+     * 集計項目1件分の件数・割合・プログレスバーを描画し、絞り込み可能な場合はクリック遷移ボタンとして出力する描画関数。
+     */
     const renderBreakdownRow = (
         item: CountItem,
         barColor: string,

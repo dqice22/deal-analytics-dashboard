@@ -18,10 +18,16 @@ const COOKIE_NAME = 'sfa_session';
 const EMPLOYEE_CODE_REGEX = /^\d{6}$/;
 const PASSWORD_MAX_LENGTH = 64;
 
+/**
+ * 入力値（unknown）が文字列であれば前後空白を除去し、それ以外は空文字を返す正規化関数。
+ */
 function normalizeCode(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
 }
 
+/**
+ * ログインリクエスト（社員コード・パスワード）を検証し、認証成功時にJWTを発行してセッションCookieへ設定するPOSTハンドラ。
+ */
 export async function POST(req: NextRequest) {
     try {
         if (!process.env.AUTH_SECRET) {

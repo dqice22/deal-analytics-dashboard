@@ -15,6 +15,7 @@ const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
+const DEAL_TITLE_MAX_LENGTH = 150;
 const RAW_MEMO_MAX_LENGTH = 2000;
 
 interface CurrentUser {
@@ -40,10 +41,16 @@ interface Employee {
     employee_name: string;
 }
 
+/**
+ * 入力値（unknown）が文字列であれば前後空白を除去し、それ以外は空文字を返す正規化関数。
+ */
 function normalizeText(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
 }
 
+/**
+ * 実行日の年月日を「YYYY-MM-DD」形式の文字列で取得する関数。
+ */
 function getTodayDateString(): string {
     const now = new Date();
     const year = now.getFullYear();
@@ -52,6 +59,9 @@ function getTodayDateString(): string {
     return `${year}-${month}-${day}`;
 }
 
+/**
+ * 認証確認、マスタデータ取得、新規商談フォームの入力状態管理、および登録API送信を行うメインコンポーネント。
+ */
 function NewDealContent() {
     const router = useRouter();
 
@@ -75,6 +85,9 @@ function NewDealContent() {
     const [errorMsg, setErrorMsg] = useState('');
     const [message, setMessage] = useState('');
 
+    /**
+     * 登録フォームの入力値やメッセージ状態を初期値（ログイン社員の担当初期選択・先頭フェーズ・本日日付など）へリセットする関数。
+     */
     const applyDefaultFormState = useCallback(
         (
             user: CurrentUser | null,
@@ -102,9 +115,16 @@ function NewDealContent() {
 
     // 再表示時に前回の入力値・状態をリセット
     useEffect(() => {
+        /**
+         * ブラウザの戻る操作やページ復元（pageshow）時にフォーム状態を初期化するイベントハンドラ。
+         */
         const handlePageShow = () => {
             applyDefaultFormState(currentUser, phases, employees);
         };
+
+        /**
+         * ページが再表示（visible）された際にフォーム状態を初期化するイベントハンドラ。
+         */
         const handleVisibilityChange = () => {
             if (document.visibilityState === 'visible') {
                 applyDefaultFormState(currentUser, phases, employees);
@@ -124,6 +144,9 @@ function NewDealContent() {
     useEffect(() => {
         let active = true;
 
+        /**
+         * 現在のログインセッション（/api/auth/me）を確認し、未認証ならログイン画面へ遷移する非同期関数。
+         */
         const checkAuth = async () => {
             try {
                 const res = await fetch('/api/auth/me', { cache: 'no-store' });
@@ -170,6 +193,9 @@ function NewDealContent() {
     }, [router]);
 
     // マスタデータ取得
+    /**
+     * 顧客企業・商談フェーズ・有効な社員のマスタデータをSupabaseから取得し、フォーム初期値を反映する関数。
+     */
     const loadMasters = useCallback(async () => {
         try {
             const [
@@ -237,6 +263,9 @@ function NewDealContent() {
         };
     }, [authChecking, currentUser, loadMasters]);
 
+    /**
+     * 入力値の検証を行ったうえで新規商談登録API（/api/deals）へ送信し、成功時にダッシュボードへ遷移するイベントハンドラ。
+     */
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!currentUser) return;
@@ -257,6 +286,10 @@ function NewDealContent() {
         }
         if (!trimmedTitle) {
             setErrorMsg('商談タイトル・案件名を入力してください。');
+            return;
+        }
+        if (trimmedTitle.length > DEAL_TITLE_MAX_LENGTH) {
+            setErrorMsg(`商談タイトル・案件名は${DEAL_TITLE_MAX_LENGTH}文字以内で入力してください。`);
             return;
         }
         if (!trimmedDate) {
@@ -314,33 +347,65 @@ function NewDealContent() {
 
     if (authChecking || loadingMasters) {
         return (
-            <div style={{ padding: '40px', textAlign: 'center', fontFamily: 'sans-serif' }}>
+            <div style={{ padding: '40px', textAlign: 'center', fontFamily: 'sans-serif', fontSize: '14px' }}>
                 読み込み中...
             </div>
         );
     }
 
+    const trimmedTitleLength = dealTitle.trim().length;
+    const isTitleOverLimit = trimmedTitleLength > DEAL_TITLE_MAX_LENGTH;
     const trimmedMemoLength = rawMemo.trim().length;
     const isMemoOverLimit = trimmedMemoLength > RAW_MEMO_MAX_LENGTH;
+    const isFormInvalid = submitting || isTitleOverLimit || isMemoOverLimit;
+
+    const metaRowStyle = {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: '8px',
+        marginTop: '4px',
+        fontSize: '12px',
+    } as const;
+
+    const counterStyle = (overLimit: boolean) =>
+        ({
+            color: overLimit ? '#dc2626' : '#4b5563',
+            fontWeight: overLimit ? 'bold' : 'normal',
+            whiteSpace: 'nowrap',
+            flexShrink: 0,
+        }) as const;
+
+    const formControlStyle = {
+        width: '100%',
+        minWidth: 0,
+        padding: '8px 10px',
+        fontSize: '14px',
+        fontFamily: 'inherit',
+        border: '1px solid #d1d5db',
+        borderRadius: '4px',
+        backgroundColor: '#fff',
+        boxSizing: 'border-box',
+    } as const;
 
     return (
-        <div style={{ maxWidth: '880px', margin: '0 auto', padding: '24px', fontFamily: 'sans-serif' }}>
+        <div style={{ maxWidth: '880px', margin: '0 auto', padding: '20px', fontFamily: 'sans-serif' }}>
             <header
                 style={{
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
-                    paddingBottom: '16px',
+                    paddingBottom: '12px',
                     borderBottom: '1px solid #e5e7eb',
-                    marginBottom: '24px',
+                    marginBottom: '14px',
                     gap: '12px',
                     flexWrap: 'wrap',
                 }}
             >
                 <div>
-                    <h1 style={{ margin: '0 0 4px 0', fontSize: '22px' }}>新規商談登録</h1>
-                    <div style={{ fontSize: '13px', color: '#4b5563' }}>
-                        ログイン中: <strong>{currentUser?.employeeName}</strong>（{currentUser?.employeeCode}）
+                    <h1 style={{ margin: '0 0 4px 0', fontSize: '22px', lineHeight: 1.3 }}>新規商談登録</h1>
+                    <div style={{ fontSize: '12px', color: '#4b5563' }}>
+                        ログイン中: <strong>{currentUser?.employeeName}</strong> ({currentUser?.employeeCode})
                     </div>
                 </div>
 
@@ -358,6 +423,7 @@ function NewDealContent() {
                         textDecoration: 'none',
                         fontSize: '13px',
                         fontWeight: 'bold',
+                        whiteSpace: 'nowrap',
                     }}
                 >
                     ← 一覧へ戻る
@@ -373,61 +439,82 @@ function NewDealContent() {
                     gap: '14px',
                     border: '1px solid #e5e7eb',
                     borderRadius: '8px',
-                    padding: '20px',
+                    padding: '18px 20px',
                     backgroundColor: '#fff',
                 }}
             >
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
-                    <div>
-                        <label htmlFor="companyId" style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' }}>
-                            顧客企業 *
-                        </label>
-                        <select
-                            id="companyId"
-                            value={companyId}
-                            onChange={(e) => setCompanyId(e.target.value)}
-                            required
+                {/* 1段目: 顧客企業（全幅） */}
+                <div>
+                    <label htmlFor="companyId" style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' }}>
+                        顧客企業 *
+                    </label>
+                    <select
+                        id="companyId"
+                        value={companyId}
+                        onChange={(e) => setCompanyId(e.target.value)}
+                        required
+                        style={formControlStyle}
+                    >
+                        <option value="">選択してください</option>
+                        {companies.map((c) => (
+                            <option key={c.company_id} value={String(c.company_id)}>
+                                {c.company_name}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+
+                {/* 2段目: 商談タイトル・案件名（全幅） */}
+                <div>
+                    <label htmlFor="dealTitle" style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' }}>
+                        商談タイトル・案件名 *
+                    </label>
+                    <input
+                        id="dealTitle"
+                        type="text"
+                        value={dealTitle}
+                        onChange={(e) => setDealTitle(e.target.value)}
+                        maxLength={DEAL_TITLE_MAX_LENGTH}
+                        placeholder="例: 業務システム刷新のご提案"
+                        autoComplete="off"
+                        required
+                        title={dealTitle}
+                        style={{
+                            ...formControlStyle,
+                            border: `1px solid ${isTitleOverLimit ? '#dc2626' : '#d1d5db'}`,
+                        }}
+                    />
+                    <div style={metaRowStyle}>
+                        <span
                             style={{
-                                width: '100%',
-                                padding: '8px',
-                                border: '1px solid #d1d5db',
-                                borderRadius: '4px',
-                                backgroundColor: '#fff',
+                                color: isTitleOverLimit ? '#dc2626' : '#6b7280',
+                                fontWeight: isTitleOverLimit ? 'bold' : 'normal',
                             }}
                         >
-                            <option value="">選択してください</option>
-                            {companies.map((c) => (
-                                <option key={c.company_id} value={String(c.company_id)}>
-                                    {c.company_name}
-                                </option>
-                            ))}
-                        </select>
+                            {isTitleOverLimit
+                                ? `商談タイトル・案件名は${DEAL_TITLE_MAX_LENGTH}文字以内で入力してください。`
+                                : `※ 前後の空白を除いた文字数で判定されます（必須・最大${DEAL_TITLE_MAX_LENGTH}文字）`}
+                        </span>
+                        <span style={counterStyle(isTitleOverLimit)}>
+                            {trimmedTitleLength} / {DEAL_TITLE_MAX_LENGTH}文字
+                        </span>
                     </div>
+                </div>
 
-                    <div>
-                        <label htmlFor="dealTitle" style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' }}>
-                            商談タイトル・案件名 *
-                        </label>
-                        <input
-                            id="dealTitle"
-                            type="text"
-                            value={dealTitle}
-                            onChange={(e) => setDealTitle(e.target.value)}
-                            placeholder="例: 業務システム刷新のご提案"
-                            autoComplete="off"
-                            required
-                            style={{
-                                width: '100%',
-                                padding: '8px',
-                                border: '1px solid #d1d5db',
-                                borderRadius: '4px',
-                                boxSizing: 'border-box',
-                            }}
-                        />
-                    </div>
-
-                    <div>
-                        <label htmlFor="dealDate" style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' }}>
+                {/* 3段目: 商談日・担当社員・商談フェーズ・リスクレベル（1列配置） */}
+                <div
+                    style={{
+                        display: 'grid',
+                        gridTemplateColumns: '155px minmax(0, 1.3fr) minmax(0, 1.2fr) 150px',
+                        gap: '10px',
+                        alignItems: 'start',
+                    }}
+                >
+                    <div style={{ minWidth: 0 }}>
+                        <label
+                            htmlFor="dealDate"
+                            style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px', whiteSpace: 'nowrap' }}
+                        >
                             商談日 *
                         </label>
                         <input
@@ -436,20 +523,15 @@ function NewDealContent() {
                             value={dealDate}
                             onChange={(e) => setDealDate(e.target.value)}
                             required
-                            style={{
-                                width: '100%',
-                                padding: '8px',
-                                border: '1px solid #d1d5db',
-                                borderRadius: '4px',
-                                boxSizing: 'border-box',
-                            }}
+                            style={{ ...formControlStyle, padding: '8px 8px' }}
                         />
                     </div>
-                </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
-                    <div>
-                        <label htmlFor="personInChargeCode" style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' }}>
+                    <div style={{ minWidth: 0 }}>
+                        <label
+                            htmlFor="personInChargeCode"
+                            style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px', whiteSpace: 'nowrap' }}
+                        >
                             担当社員 *
                         </label>
                         <select
@@ -457,13 +539,7 @@ function NewDealContent() {
                             value={personInChargeCode}
                             onChange={(e) => setPersonInChargeCode(e.target.value)}
                             required
-                            style={{
-                                width: '100%',
-                                padding: '8px',
-                                border: '1px solid #d1d5db',
-                                borderRadius: '4px',
-                                backgroundColor: '#fff',
-                            }}
+                            style={formControlStyle}
                         >
                             <option value="">選択してください</option>
                             {employees.map((emp) => (
@@ -474,8 +550,11 @@ function NewDealContent() {
                         </select>
                     </div>
 
-                    <div>
-                        <label htmlFor="phaseCode" style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' }}>
+                    <div style={{ minWidth: 0 }}>
+                        <label
+                            htmlFor="phaseCode"
+                            style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px', whiteSpace: 'nowrap' }}
+                        >
                             商談フェーズ *
                         </label>
                         <select
@@ -483,13 +562,7 @@ function NewDealContent() {
                             value={phaseCode}
                             onChange={(e) => setPhaseCode(e.target.value)}
                             required
-                            style={{
-                                width: '100%',
-                                padding: '8px',
-                                border: '1px solid #d1d5db',
-                                borderRadius: '4px',
-                                backgroundColor: '#fff',
-                            }}
+                            style={formControlStyle}
                         >
                             <option value="">選択してください</option>
                             {phases.map((p) => (
@@ -500,8 +573,11 @@ function NewDealContent() {
                         </select>
                     </div>
 
-                    <div>
-                        <label htmlFor="riskLevel" style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' }}>
+                    <div style={{ minWidth: 0 }}>
+                        <label
+                            htmlFor="riskLevel"
+                            style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px', whiteSpace: 'nowrap' }}
+                        >
                             リスクレベル（AI自動判定）
                         </label>
                         <select
@@ -510,10 +586,7 @@ function NewDealContent() {
                             disabled
                             aria-disabled="true"
                             style={{
-                                width: '100%',
-                                padding: '8px',
-                                border: '1px solid #d1d5db',
-                                borderRadius: '4px',
+                                ...formControlStyle,
                                 backgroundColor: '#f3f4f6',
                                 color: '#6b7280',
                                 cursor: 'not-allowed',
@@ -524,6 +597,7 @@ function NewDealContent() {
                     </div>
                 </div>
 
+                {/* 4段目: 商談メモ */}
                 <div>
                     <label htmlFor="rawMemo" style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px' }}>
                         商談メモ *
@@ -537,22 +611,11 @@ function NewDealContent() {
                         placeholder="商談の内容を入力してください。保存時にAIが要約・ネクストアクション・リスクレベルを生成します。"
                         required
                         style={{
-                            width: '100%',
-                            padding: '8px',
+                            ...formControlStyle,
                             border: `1px solid ${isMemoOverLimit ? '#dc2626' : '#d1d5db'}`,
-                            borderRadius: '4px',
-                            boxSizing: 'border-box',
                         }}
                     />
-                    <div
-                        style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            marginTop: '4px',
-                            fontSize: '12px',
-                        }}
-                    >
+                    <div style={metaRowStyle}>
                         <span
                             style={{
                                 color: isMemoOverLimit ? '#dc2626' : '#6b7280',
@@ -563,12 +626,7 @@ function NewDealContent() {
                                 ? `商談メモは${RAW_MEMO_MAX_LENGTH}文字以内で入力してください。`
                                 : '※ 前後の空白を除いた文字数で判定されます（必須・最大2000文字）'}
                         </span>
-                        <span
-                            style={{
-                                color: isMemoOverLimit ? '#dc2626' : '#4b5563',
-                                fontWeight: isMemoOverLimit ? 'bold' : 'normal',
-                            }}
-                        >
+                        <span style={counterStyle(isMemoOverLimit)}>
                             {trimmedMemoLength} / {RAW_MEMO_MAX_LENGTH}文字
                         </span>
                     </div>
@@ -586,19 +644,20 @@ function NewDealContent() {
                     </p>
                 )}
 
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '8px' }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '6px' }}>
                     <button
                         type="submit"
-                        disabled={submitting || isMemoOverLimit}
+                        disabled={isFormInvalid}
                         style={{
                             padding: '10px 20px',
                             backgroundColor: '#0066cc',
                             color: '#fff',
                             border: 'none',
                             borderRadius: '6px',
+                            fontSize: '14px',
                             fontWeight: 'bold',
-                            cursor: submitting || isMemoOverLimit ? 'not-allowed' : 'pointer',
-                            opacity: submitting || isMemoOverLimit ? 0.7 : 1,
+                            cursor: isFormInvalid ? 'not-allowed' : 'pointer',
+                            opacity: isFormInvalid ? 0.7 : 1,
                         }}
                     >
                         {submitting ? 'AI分析・登録中...' : '商談を登録'}
@@ -609,11 +668,14 @@ function NewDealContent() {
     );
 }
 
+/**
+ * 新規商談登録画面のエントリポイント。フォーム本体を Suspense でラップして描画するコンポーネント。
+ */
 export default function NewDealPage() {
     return (
         <Suspense
             fallback={
-                <div style={{ padding: '40px', textAlign: 'center', fontFamily: 'sans-serif' }}>
+                <div style={{ padding: '40px', textAlign: 'center', fontFamily: 'sans-serif', fontSize: '14px' }}>
                     読み込み中...
                 </div>
             }

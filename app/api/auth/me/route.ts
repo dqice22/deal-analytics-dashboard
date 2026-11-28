@@ -10,10 +10,16 @@ import { jwtVerify } from 'jose';
 const secretKey = new TextEncoder().encode(process.env.AUTH_SECRET!);
 const COOKIE_NAME = 'sfa_session';
 
+/**
+ * 入力値（unknown）が文字列であれば前後空白を除去し、それ以外は空文字を返す正規化関数。
+ */
 function normalizeString(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
 }
 
+/**
+ * セッションCookie（sfa_session）内のJWTを検証し、認証済みであればログイン中ユーザー情報を返すGETハンドラ。
+ */
 export async function GET() {
     try {
         const cookieStore = await cookies();

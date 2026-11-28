@@ -13,11 +13,28 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const secretKey = new TextEncoder().encode(process.env.AUTH_SECRET!);
 const COOKIE_NAME = 'sfa_session';
 const RAW_MEMO_MAX_LENGTH = 2000;
+const SUMMARY_MAX_LENGTH = 1000;
+const NEXT_ACTION_MAX_LENGTH = 500;
+const PROMPT_SUMMARY_MAX_LENGTH = 300;
+const PROMPT_NEXT_ACTION_MAX_LENGTH = 150;
 
+/**
+ * 入力値（unknown）が文字列であれば前後空白を除去し、それ以外は空文字を返す正規化関数。
+ */
 function normalizeCode(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
 }
 
+/**
+ * 指定された最大文字数を超える文字列を切り詰めて返す関数。
+ */
+function truncateText(text: string, maxLength: number): string {
+    return text.length > maxLength ? text.slice(0, maxLength) : text;
+}
+
+/**
+ * セッションCookie（sfa_session）内のJWTを検証し、ログイン中ユーザーの社員コードを返す非同期関数（未認証・不正時はnull）。
+ */
 async function getEmployeeCodeFromCookie(): Promise<string | null> {
     try {
         const cookieStore = await cookies();
@@ -32,6 +49,9 @@ async function getEmployeeCodeFromCookie(): Promise<string | null> {
     }
 }
 
+/**
+ * 認証確認と入力パラメータ検証を行ったうえでGemini APIで商談メモを分析し、Supabaseのdealsテーブルへ新規登録するPOSTハンドラ。
+ */
 export async function POST(request: Request) {
     try {
         const sessionEmployeeCode = await getEmployeeCodeFromCookie();
@@ -113,8 +133,8 @@ export async function POST(request: Request) {
 
 【出力フォーマット】
 {
-  "summary": "商談の要約（3〜4行程度）",
-  "next_action": "次に取るべき具体的なネクストアクション",
+  "summary": "商談の要約（3〜4行程度、${PROMPT_SUMMARY_MAX_LENGTH}文字以内で簡潔に）",
+  "next_action": "次に取るべき具体的なネクストアクション（${PROMPT_NEXT_ACTION_MAX_LENGTH}文字以内で簡潔に）",
   "risk_level": "高" または "中" または "低"
 }
 
@@ -150,15 +170,18 @@ ${trimmedMemo}
         try {
             const cleanText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
             const parsed = JSON.parse(cleanText);
+            const rawSummary =
+                typeof parsed.summary === 'string' && parsed.summary.trim()
+                    ? parsed.summary.trim()
+                    : '要約の生成に失敗しました。';
+            const rawNextAction =
+                typeof parsed.next_action === 'string' && parsed.next_action.trim()
+                    ? parsed.next_action.trim()
+                    : '確認が必要です。';
+
             analysis = {
-                summary:
-                    typeof parsed.summary === 'string' && parsed.summary.trim()
-                        ? parsed.summary.trim()
-                        : '要約の生成に失敗しました。',
-                next_action:
-                    typeof parsed.next_action === 'string' && parsed.next_action.trim()
-                        ? parsed.next_action.trim()
-                        : '確認が必要です。',
+                summary: truncateText(rawSummary, SUMMARY_MAX_LENGTH),
+                next_action: truncateText(rawNextAction, NEXT_ACTION_MAX_LENGTH),
                 risk_level:
                     parsed.risk_level === '高' || parsed.risk_level === '中' || parsed.risk_level === '低'
                         ? parsed.risk_level
@@ -166,9 +189,10 @@ ${trimmedMemo}
             };
         } catch {
             console.error('Gemini JSON Parse Error:', responseText);
+            const fallbackSummary = responseText.trim() || '要約の生成に失敗しました。';
             analysis = {
-                summary: responseText || '要約の生成に失敗しました。',
-                next_action: '確認が必要です。',
+                summary: truncateText(fallbackSummary, SUMMARY_MAX_LENGTH),
+                next_action: truncateText('確認が必要です。', NEXT_ACTION_MAX_LENGTH),
                 risk_level: '中',
             };
         }

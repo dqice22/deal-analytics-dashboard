@@ -8,6 +8,9 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 
+/**
+ * パスワード表示状態に応じて目のアイコン（表示／非表示切替用SVG）を描画するコンポーネント。
+ */
 function EyeIcon({ visible }: { visible: boolean }) {
     if (visible) {
         return (
@@ -48,6 +51,9 @@ function EyeIcon({ visible }: { visible: boolean }) {
     );
 }
 
+/**
+ * ログインフォームの表示、入力値の状態管理、および認証APIへの送信と画面遷移を行うページコンポーネント。
+ */
 export default function LoginPage() {
     const router = useRouter();
 
@@ -60,6 +66,9 @@ export default function LoginPage() {
     const employeeCodeRef = useRef<HTMLInputElement | null>(null);
     const passwordRef = useRef<HTMLInputElement | null>(null);
 
+    /**
+     * ログインフォームの入力値・表示切替・エラー・送信中状態を初期状態へリセットする関数。
+     */
     const clearLoginForm = useCallback(() => {
         setEmployeeCode('');
         setPassword('');
@@ -80,9 +89,16 @@ export default function LoginPage() {
             clearLoginForm();
         }, 0);
 
+        /**
+         * ブラウザの戻る操作やbfcacheからの復元時にフォーム状態をクリアするイベントハンドラ。
+         */
         const handlePageShow = () => {
             clearLoginForm();
         };
+
+        /**
+         * ページが再表示（visible）された際にフォーム状態をクリアするイベントハンドラ。
+         */
         const handleVisibilityChange = () => {
             if (document.visibilityState === 'visible') {
                 clearLoginForm();
@@ -99,6 +115,9 @@ export default function LoginPage() {
         };
     }, [clearLoginForm]);
 
+    /**
+     * フォーム送信時に認証API（/api/auth/login）を呼び出し、成功時はトップ画面へ遷移するイベントハンドラ。
+     */
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setErrorMsg('');

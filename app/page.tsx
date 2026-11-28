@@ -57,10 +57,16 @@ interface DealListItem {
     risk_level: string;
 }
 
+/**
+ * URLクエリのリスク指定値を検証し、「高」「中」「低」のいずれかであればそのまま返し、それ以外は空文字に正規化する関数。
+ */
 function normalizeRiskParam(rawRisk: string | null): string {
     return rawRisk === '高' || rawRisk === '中' || rawRisk === '低' ? rawRisk : '';
 }
 
+/**
+ * 認証確認、マスタ・商談データの取得、各種絞り込みと一覧表示を担当するダッシュボード本体コンポーネント。
+ */
 function DashboardContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -106,6 +112,9 @@ function DashboardContent() {
     useEffect(() => {
         let active = true;
 
+        /**
+         * ログイン中のセッション情報（/api/auth/me）を確認し、未認証の場合はログイン画面へ遷移する非同期関数。
+         */
         const checkAuth = async () => {
             try {
                 const res = await fetch('/api/auth/me', { cache: 'no-store' });
@@ -141,6 +150,9 @@ function DashboardContent() {
         };
     }, [router]);
 
+    /**
+     * 企業・フェーズ・社員マスタおよび未削除の商談一覧をSupabaseから取得し、表示用データへ整形する関数。
+     */
     const fetchDashboardData = useCallback(async () => {
         try {
             const [
@@ -244,6 +256,9 @@ function DashboardContent() {
         };
     }, [authChecking, currentUser, fetchDashboardData]);
 
+    /**
+     * ログアウトAPI（/api/auth/logout）を呼び出し、ログイン画面へ遷移するイベントハンドラ。
+     */
     const handleLogout = async () => {
         try {
             await fetch('/api/auth/logout', { method: 'POST' });
@@ -253,6 +268,9 @@ function DashboardContent() {
         }
     };
 
+    /**
+     * すべての絞り込み条件とURLクエリパラメータを初期状態へリセットするイベントハンドラ。
+     */
     const handleResetFilters = () => {
         setSelectedCompanyId('');
         setSelectedPhaseCode('');
@@ -293,8 +311,6 @@ function DashboardContent() {
             const kw = searchKeyword.trim().toLowerCase();
             const target = [
                 deal.deal_title,
-                deal.company_name,
-                deal.person_in_charge_name,
                 deal.summary ?? '',
                 deal.next_action ?? '',
             ]
@@ -437,7 +453,8 @@ function DashboardContent() {
                         type="text"
                         value={searchKeyword}
                         onChange={(e) => setSearchKeyword(e.target.value)}
-                        placeholder="案件名・要約で検索"
+                        placeholder="案件・要約・次アクション検索"
+                        title="案件名・要約・次アクションで検索"
                         style={{
                             width: '100%',
                             minWidth: 0,
@@ -746,6 +763,9 @@ function DashboardContent() {
     );
 }
 
+/**
+ * ダッシュボード画面のエントリポイント。useSearchParams を利用する本体を Suspense でラップするコンポーネント。
+ */
 export default function DashboardPage() {
     return (
         <Suspense fallback={<div style={{ padding: '40px', textAlign: 'center', fontFamily: 'sans-serif' }}>読み込み中...</div>}>

@@ -24,14 +24,23 @@ const PASSWORD_MAX = 64;
 const PASSWORD_HALF_WIDTH_PRINTABLE_REGEX = /^[!-~]+$/;
 const PASSWORD_HASH_MAX = 128;
 
+/**
+ * 入力値（unknown）が文字列であれば前後空白を除去し、それ以外は空文字を返す正規化関数。
+ */
 function normalizeCode(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
 }
 
+/**
+ * テキスト入力値（unknown）が文字列であれば前後空白を除去し、それ以外は空文字を返す正規化関数。
+ */
 function normalizeText(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
 }
 
+/**
+ * リクエストのセッションCookie（sfa_session）内のJWTを検証し、ログイン中ユーザーの社員コードと管理者フラグを返す非同期関数（未認証・不正時はnull）。
+ */
 async function getCurrentAdmin(req: NextRequest): Promise<{
     employeeCode: string;
     isAdmin: boolean;
@@ -50,6 +59,9 @@ async function getCurrentAdmin(req: NextRequest): Promise<{
     }
 }
 
+/**
+ * 新規社員登録リクエストのボディ（社員コード・社員名・役職コード・初期パスワード・管理者権限）を検証し、正規化済みデータまたはエラーメッセージを返す関数。
+ */
 function validateCreatePayload(body: Record<string, unknown>):
     | {
         ok: true;
@@ -105,6 +117,9 @@ function validateCreatePayload(body: Record<string, unknown>):
     };
 }
 
+/**
+ * 指定された役職コードがpositionsテーブルに存在するかをSupabaseで確認する非同期関数。
+ */
 async function existsPositionCode(positionCode: string): Promise<boolean> {
     const { data, error } = await supabaseAdmin
         .from('positions')
@@ -115,6 +130,9 @@ async function existsPositionCode(positionCode: string): Promise<boolean> {
     return !error && Boolean(data);
 }
 
+/**
+ * 管理者認証・権限チェックのうえ、有効な社員一覧・削除済み社員コード一覧・役職マスタ一覧を取得して返すGETハンドラ。
+ */
 export async function GET(req: NextRequest) {
     try {
         const auth = await getCurrentAdmin(req);
@@ -183,6 +201,9 @@ export async function GET(req: NextRequest) {
     }
 }
 
+/**
+ * 管理者認証・権限チェックと入力検証・役職存在確認を行ったうえで、パスワードをハッシュ化してemployeesテーブルへ新規登録するPOSTハンドラ。
+ */
 export async function POST(req: NextRequest) {
     try {
         const auth = await getCurrentAdmin(req);
@@ -242,6 +263,9 @@ export async function POST(req: NextRequest) {
     }
 }
 
+/**
+ * 管理者認証・権限チェックのもとで対象社員の論理削除（delete_flg: true）または社員情報（社員名・役職コード・管理者権限）の更新を行うPATCHハンドラ。
+ */
 export async function PATCH(req: NextRequest) {
     try {
         const auth = await getCurrentAdmin(req);

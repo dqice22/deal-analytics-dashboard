@@ -65,6 +65,9 @@ const PASSWORD_MIN_LENGTH = 8;
 const PASSWORD_MAX_LENGTH = 64;
 const PASSWORD_HALF_WIDTH_PRINTABLE_REGEX = /^[!-~]+$/;
 
+/**
+ * 社員コードの入力値（必須・半角数字6桁・有効/削除済みデータとの重複）を検証し、エラーメッセージを返す関数。
+ */
 function validateEmployeeCode(
     rawCode: string,
     activeCodes: string[],
@@ -86,6 +89,9 @@ function validateEmployeeCode(
     return null;
 }
 
+/**
+ * 社員名の入力値（必須・最大文字数）を検証し、問題があればエラーメッセージを返す関数。
+ */
 function validateEmployeeName(rawName: string): string | null {
     const trimmed = rawName.trim();
     if (!trimmed) {
@@ -97,6 +103,9 @@ function validateEmployeeName(rawName: string): string | null {
     return null;
 }
 
+/**
+ * 役職コードの入力値（必須・文字数上限・マスタ存在チェック）を検証し、エラーメッセージを返す関数。
+ */
 function validatePositionCode(rawPositionCode: string, validPositionCodes: string[]): string | null {
     const trimmed = rawPositionCode.trim();
     if (!trimmed) {
@@ -111,6 +120,9 @@ function validatePositionCode(rawPositionCode: string, validPositionCodes: strin
     return null;
 }
 
+/**
+ * 初期パスワードの入力値（必須・空白禁止・文字数範囲・半角印字可能文字）を検証し、エラーメッセージを返す関数。
+ */
 function validatePassword(rawPassword: string): string | null {
     if (!rawPassword) {
         return '初期パスワードを入力してください。';
@@ -130,6 +142,9 @@ function validatePassword(rawPassword: string): string | null {
     return null;
 }
 
+/**
+ * 新規社員登録時の全入力項目（社員コード・社員名・役職コード・初期パスワード・管理者権限）を一括検証する関数。
+ */
 function validateCreateEmployee(input: CreateEmployeeInput): string | null {
     const codeError = validateEmployeeCode(
         input.employeeCode,
@@ -154,6 +169,9 @@ function validateCreateEmployee(input: CreateEmployeeInput): string | null {
     return null;
 }
 
+/**
+ * 既存社員情報の更新時の入力項目（対象社員コード・社員名・役職コード・管理者権限）を一括検証する関数。
+ */
 function validateUpdateEmployee(input: UpdateEmployeeInput): string | null {
     const trimmedCode = input.employeeCode.trim();
     if (!trimmedCode || !EMPLOYEE_CODE_REGEX.test(trimmedCode)) {
@@ -173,6 +191,9 @@ function validateUpdateEmployee(input: UpdateEmployeeInput): string | null {
     return null;
 }
 
+/**
+ * パスワード表示状態に応じて目のアイコン（表示／非表示切替用SVG）を描画するコンポーネント。
+ */
 function EyeIcon({ visible }: { visible: boolean }) {
     if (visible) {
         return (
@@ -213,6 +234,9 @@ function EyeIcon({ visible }: { visible: boolean }) {
     );
 }
 
+/**
+ * 管理者権限の確認、社員・役職マスタの取得、新規登録・行内編集・論理削除の一連のUIと処理を担当するページコンポーネント。
+ */
 export default function AdminEmployeesPage() {
     const router = useRouter();
 
@@ -244,6 +268,9 @@ export default function AdminEmployeesPage() {
     const [errorMsg, setErrorMsg] = useState('');
 
     // フォーム入力値・編集状態・メッセージの初期化
+    /**
+     * 新規登録フォームの入力値、行内編集状態、処理中フラグ、および各種メッセージを初期化する関数。
+     */
     const resetFormAndTransientState = useCallback(() => {
         setNewCode('');
         setNewName('');
@@ -265,9 +292,16 @@ export default function AdminEmployeesPage() {
 
     // 画面再表示時に前回の入力値・状態をリセット
     useEffect(() => {
+        /**
+         * ブラウザの戻る操作やページ復元（pageshow）時にフォーム・一時状態を初期化するイベントハンドラ。
+         */
         const handlePageShow = () => {
             resetFormAndTransientState();
         };
+
+        /**
+         * ページが再表示（visible）された際にフォーム・一時状態を初期化するイベントハンドラ。
+         */
         const handleVisibilityChange = () => {
             if (document.visibilityState === 'visible') {
                 resetFormAndTransientState();
@@ -287,6 +321,9 @@ export default function AdminEmployeesPage() {
     useEffect(() => {
         let active = true;
 
+        /**
+         * 現在のログインセッション（/api/auth/me）と管理者権限を確認し、未認証ならログイン画面へ、非管理者ならダッシュボードへ遷移する非同期関数。
+         */
         const checkAdmin = async () => {
             try {
                 const res = await fetch('/api/auth/me', { cache: 'no-store' });
@@ -326,6 +363,9 @@ export default function AdminEmployeesPage() {
         };
     }, [router]);
 
+    /**
+     * 社員一覧・削除済み社員コード・役職マスタを管理API（/api/admin/employees）から取得し、表示用リストへ整形する関数。
+     */
     const fetchEmployees = useCallback(async () => {
         setLoading(true);
         try {
@@ -409,6 +449,9 @@ export default function AdminEmployeesPage() {
         trimmedNewCode.length > 0 && !EMPLOYEE_CODE_REGEX.test(trimmedNewCode);
 
     // 新規社員登録
+    /**
+     * 新規社員フォームの入力値を検証したうえで登録API（POST /api/admin/employees）を呼び出し、完了後に一覧を再取得するイベントハンドラ。
+     */
     const handleCreate = async (e: React.FormEvent) => {
         e.preventDefault();
         setMessage('');
@@ -480,6 +523,9 @@ export default function AdminEmployeesPage() {
     };
 
     // 編集開始
+    /**
+     * 指定された社員行の現在値を編集用ステートへセットし、行内編集モードを開始する関数。
+     */
     const startEdit = (emp: EmployeeRow) => {
         setMessage('');
         setErrorMsg('');
@@ -494,6 +540,9 @@ export default function AdminEmployeesPage() {
     };
 
     // 編集キャンセル
+    /**
+     * 行内編集モードを終了し、編集中の入力ステートをクリアする関数。
+     */
     const cancelEdit = () => {
         setEditingCode(null);
         setEditName('');
@@ -502,6 +551,9 @@ export default function AdminEmployeesPage() {
     };
 
     // 編集保存
+    /**
+     * 編集中の社員情報を検証したうえで更新API（PATCH /api/admin/employees）へ送信し、完了後に一覧を再取得するイベントハンドラ。
+     */
     const handleSaveEdit = async (employeeCode: string) => {
         setMessage('');
         setErrorMsg('');
@@ -555,6 +607,9 @@ export default function AdminEmployeesPage() {
     };
 
     // 論理削除
+    /**
+     * 確認ダイアログ後に社員の論理削除API（PATCH /api/admin/employees with delete_flg: true）を呼び出し、完了後に一覧を再取得するイベントハンドラ。
+     */
     const handleSoftDelete = async (emp: EmployeeRow) => {
         const ok = window.confirm(
             `社員「${emp.employee_name}」を削除しますか？`
