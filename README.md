@@ -71,6 +71,6 @@
   - **論理削除と履歴整合性の両立**：社員・商談データに論理削除（`delete_flg`）を採用し、通常の一覧・選択肢からは除外しつつ、過去商談の担当者・更新者履歴は参照できるようクエリ条件と権限チェックを整理した
 ## 環境構築手順
 ```bash
-git clone [https://github.com/dqice22/deal-analytics-dashboard.git](https://github.com/dqice22/deal-analytics-dashboard.git)
+git clone https://github.com/dqice22/deal-analytics-dashboard.git
 cd deal-analytics-dashboard
 npm install
